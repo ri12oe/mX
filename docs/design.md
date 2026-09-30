@@ -154,7 +154,7 @@ Tables:
 - `usage(id, message_id → messages ON DELETE CASCADE, provider, model, prompt_version, input_tokens, output_tokens, cost_usd, latency_ms, created_at)`
 
 ## 8. Personality and prompt loading
-Defined in `prompts/mx_system_v1.md`.
+Defined in `prompts/mx_system_v3.md` (tuned in Week 3; see `evals/tuning-log.md`). Earlier versions stay in `prompts/` for comparison.
 
 mX is a broad expert and tutor: coding (many languages), math through calculus, science,
 writing, planning/building projects, and inventing original ideas (innovation).

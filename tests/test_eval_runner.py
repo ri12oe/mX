@@ -100,7 +100,7 @@ def test_run_all_writes_one_row_per_case_with_usage_and_cost(tmp_path: Path):
     rows = {r["prompt_id"]: r for r in map(json.loads, out.read_text(encoding="utf-8").splitlines())}
     assert set(rows) == {"p2", "p4"}
     p2 = rows["p2"]
-    assert (p2["output"], p2["model"], p2["prompt_version"]) == ("It is Tokyo.", "claude-opus-5-5", "mx_system_v1")
+    assert (p2["output"], p2["model"], p2["prompt_version"]) == ("It is Tokyo.", "claude-opus-5-5", "mx_system_v3")
     assert p2["usage"] == {"input_tokens": 1000, "output_tokens": 100}
     assert p2["cost_usd"] == pytest.approx(0.006)
     assert p2["auto"]["pass"] is True and rows["p4"]["auto"] is None

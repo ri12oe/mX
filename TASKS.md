@@ -26,7 +26,7 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 
 ## Week 3 — Personality & inputs
 - [x] Image input on `/chat` (base64, limits, stored in `images`) + `GET /images/{id}` (§5, §7)
-- [ ] Tune `prompts/mx_system_v1.md` against the eval set; grow evals toward 50
+- [x] Tune `prompts/mx_system_v1.md` against the eval set; grow evals toward 50 → v3 adopted, 31 evals (see `evals/tuning-log.md`)
 
 ## Week 4 — Interface & quality
 - [ ] Install Node.js, scaffold React + Vite app in `web/` (decide JS vs. TypeScript)
