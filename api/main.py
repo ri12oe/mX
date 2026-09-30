@@ -1,16 +1,28 @@
-"""mX API — Week 1 skeleton.
+"""mX API.
 
 Run:  uvicorn api.main:app --reload
 Docs: http://127.0.0.1:8000/docs
 """
 import hmac
+import sqlite3
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from api import db
 from api.config import settings
 
-app = FastAPI(title="mX API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """On startup, create the database and tables if they don't exist yet."""
+    db.init_db(settings.db_path)
+    yield
+
+
+app = FastAPI(title="mX API", version="0.1.0", lifespan=lifespan)
 
 # Lets the React dev server (a different origin) call the API from the browser.
 app.add_middleware(
@@ -19,6 +31,18 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["X-mX-Key", "Content-Type"],
 )
+
+
+def get_db() -> Iterator[sqlite3.Connection]:
+    """One SQLite connection per request, always closed afterwards.
+
+    Tests can swap it with app.dependency_overrides[get_db].
+    """
+    conn = db.connect(settings.db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def require_key(x_mx_key: str = Header(default="")) -> None:
