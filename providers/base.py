@@ -1,9 +1,11 @@
-"""Provider interface. Every model provider implements this.
+"""Provider interface (design.md §6). Every model provider implements this.
 
-Week 2 task: implement an adapter (e.g. providers/anthropic_provider.py).
+The API layer only talks to `ModelProvider`; SDKs are used only inside
+provider adapters such as providers/anthropic_provider.py.
 """
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import AsyncIterator, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass
@@ -21,13 +23,23 @@ class ModelResponse:
     output_tokens: int
 
 
+@runtime_checkable
 class ModelProvider(Protocol):
     name: str
 
     async def generate(
-        self, messages: list[Message], system: str, **opts
-    ) -> ModelResponse: ...
+        self, messages: list[Message], system: str, **opts: Any
+    ) -> ModelResponse:
+        """Return the whole reply at once."""
+        ...
 
     def stream(
-        self, messages: list[Message], system: str, **opts
-    ) -> AsyncIterator[str]: ...
+        self, messages: list[Message], system: str, **opts: Any
+    ) -> AsyncIterator[str | ModelResponse]:
+        """Yield the reply as `str` chunks, then exactly one final `ModelResponse`.
+
+        The final item carries the full text and token counts, so cost can be
+        logged for streamed replies too. Nothing is yielded after it.
+        Raises a `ProviderError` subclass on failure.
+        """
+        ...

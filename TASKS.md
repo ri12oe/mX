@@ -17,7 +17,7 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 - [x] 1. Hardened auth: `hmac.compare_digest`, refuse to start with an empty/`change-me`/short key, `tests/conftest.py` sets the test key, update `/whoami` tests (§10) (1 h)
 - [x] 2. Settings cleanup: add `DB_PATH`, `CORS_ORIGINS`, `SYSTEM_PROMPT_FILE`; remove `OPENAI_API_KEY` and `DATABASE_URL`; add CORS middleware; update `.env.example` (§10) (1 h)
 - [x] 3. Database: `api/schema.sql` (conversations, messages, images, usage with `prompt_version`), init with `user_version`, `get_db` dependency, small repository functions, tests on a temp DB (§7) (2–3 h)
-- [ ] 4. Provider types: `stream` yields `str | ModelResponse`, `providers/errors.py`, `tests/fakes.py` with `FakeProvider`, `get_provider()` dependency (§6, §11) (1 h)
+- [x] 4. Provider types: `stream` yields `str | ModelResponse`, `providers/errors.py`, `tests/fakes.py` with `FakeProvider`, `get_provider()` dependency (§6, §11) (1 h)
 - [ ] 5. Anthropic adapter `generate()`: SDK timeout/retries, error mapping, mocked tests (§6) (2 h)
 - [ ] 6. Anthropic adapter `stream()`: final item is a `ModelResponse`, mocked tests + one `@pytest.mark.live` smoke test (§6, §11) (2 h)
 - [ ] 7. Prompt loader (`api/prompts.py`) and pricing (`api/pricing.py`) with cost function, plus tests (§8, §9) (1 h)
