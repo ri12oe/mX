@@ -1,4 +1,4 @@
-# mX — Design Doc (v0.1, Phase 1)
+# mX — Design Doc (v0.2, Phase 1)
 
 Owner: Rio · Status: Draft · Last updated: 2026-09-30
 
@@ -17,24 +17,26 @@ Later phases add tools, memory, voice, context awareness, and AR-glasses clients
 ## 3. Phase 1 scope
 In scope:
 - FastAPI backend with streaming `/chat`
-- Provider layer with 2 adapters (primary + one backup)
+- Provider layer: `ModelProvider` interface + one adapter (Anthropic)
 - Personality prompt with `normal` and `brief` response modes
 - Image input (vision)
 - Conversation storage (SQLite)
-- Simple web chat UI
+- Web chat UI (React + Vite)
 - Eval set + runner, token/cost logging
 - Docker + deploy
 
-Out of scope (later phases): tools/function calling, long-term memory, voice, wake word, context awareness, fine-tuning, glasses client, multi-user accounts.
+Out of scope (later phases): backup provider adapter, tools/function calling (incl. code execution, web search), long-term memory, voice, wake word, context awareness, fine-tuning, glasses client, multi-user accounts.
+
+> v0.2 change (2026-09-30): backup provider adapter moved out of Phase 1. The provider interface stays, so a backup can be added later without touching the API layer.
 
 ## 4. Architecture
 
 ```
- [Web UI]  [future: phone / voice / glasses]
+ [Web UI: React]  [future: phone / voice / glasses]
       \          |
        v         v
    +---------------------+
-   |   mX API        |  FastAPI
+   |   mX API            |  FastAPI
    |  - auth (API key)   |
    |  - /chat (SSE)      |
    |  - prompt loader    |
@@ -47,7 +49,7 @@ Out of scope (later phases): tools/function calling, long-term memory, voice, wa
      |  + adapters      |        | messages, |
      +---+----------+---+        | usage     |
          |          |            +-----------+
-    Provider A  Provider B
+    Anthropic   [future: backup]
 ```
 
 ## 5. API (Phase 1)
@@ -85,21 +87,29 @@ class ModelProvider(Protocol):
 - `usage(id, message_id, provider, model, input_tokens, output_tokens, cost_usd, latency_ms)`
 
 ## 8. Personality
-Defined in `prompts/mx_system_v1.md`. Modes:
+Defined in `prompts/mx_system_v1.md`.
+
+mX is a broad expert and tutor: coding, math, science, writing, and planning/building projects.
+Tone is **formal and teacher-like**: explains step by step, shows reasoning, checks its work,
+and helps Rio understand rather than only handing over answers. It stays honest about
+uncertainty and its limits (no internet or code execution in Phase 1).
+
+Modes:
 - `normal` — full answers, markdown allowed
 - `brief` — 1–2 sentences, no markdown (for voice and glasses later)
 
-## 9. Open decisions
-- [ ] Primary provider (default assumption: Anthropic Claude API) and backup provider
-- [ ] Assistant name and voice/tone
-- [ ] Web UI stack (plain HTML/JS vs. React)
-- [ ] Deploy host
+## 9. Decisions
+Decided 2026-09-30:
+- [x] **Provider:** Anthropic Claude API only for Phase 1. Backup provider deferred to a later phase (see §3).
+- [x] **Name and tone:** mX. Formal, teacher-like broad expert (see §8).
+- [x] **Web UI stack:** React + Vite, chosen so Rio can learn React. Needs Node.js, and CORS on the API for the dev server origin. JS vs. TypeScript to be decided at the start of Week 4.
+- [x] **Deploy host:** deferred to Week 5. Constraint: host must offer a persistent disk for the SQLite file.
 
 ## 10. Milestones
 | Week | Deliverable |
 |---|---|
 | 1 | Repo, design doc, agent roles, API keys, `/health` running |
 | 2 | Provider layer + streaming `/chat` + SQLite history |
-| 3 | Personality, modes, image input, second adapter |
-| 4 | Web UI, eval set, cost logging |
+| 3 | Personality, modes, image input |
+| 4 | React web UI, eval set, cost logging |
 | 5 | Tests, Docker, deploy, Phase 1 review |
