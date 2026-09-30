@@ -29,8 +29,8 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 - [x] Tune `prompts/mx_system_v1.md` against the eval set; grow evals toward 50 → v3 adopted, 31 evals (see `evals/tuning-log.md`)
 
 ## Week 4 — Interface & quality
-- [ ] Install Node.js, scaffold React + Vite app in `web/` (decide JS vs. TypeScript)
-- [ ] React chat UI with streaming replies (`fetch` + stream reader, §5)
+- [x] Install Node.js, scaffold React + Vite app in `web/` (decide JS vs. TypeScript) → TypeScript
+- [x] React chat UI with streaming replies (`fetch` + stream reader, §5)
 - [ ] Eval runner script (50 prompts, auto-checks for `brief`, §12)
 
 ## Week 5 — Ship
