@@ -18,7 +18,7 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 - [x] 2. Settings cleanup: add `DB_PATH`, `CORS_ORIGINS`, `SYSTEM_PROMPT_FILE`; remove `OPENAI_API_KEY` and `DATABASE_URL`; add CORS middleware; update `.env.example` (§10) (1 h)
 - [x] 3. Database: `api/schema.sql` (conversations, messages, images, usage with `prompt_version`), init with `user_version`, `get_db` dependency, small repository functions, tests on a temp DB (§7) (2–3 h)
 - [x] 4. Provider types: `stream` yields `str | ModelResponse`, `providers/errors.py`, `tests/fakes.py` with `FakeProvider`, `get_provider()` dependency (§6, §11) (1 h)
-- [ ] 5. Anthropic adapter `generate()`: SDK timeout/retries, error mapping, mocked tests (§6) (2 h)
+- [x] 5. Anthropic adapter `generate()`: SDK timeout/retries, error mapping, mocked tests (§6) (2 h)
 - [ ] 6. Anthropic adapter `stream()`: final item is a `ModelResponse`, mocked tests + one `@pytest.mark.live` smoke test (§6, §11) (2 h)
 - [ ] 7. Prompt loader (`api/prompts.py`) and pricing (`api/pricing.py`) with cost function, plus tests (§8, §9) (1 h)
 - [ ] 8. `POST /chat` with SSE: meta/delta/done/error events, 20-message history window, atomic save, usage row, log line; tests with `FakeProvider` incl. error path (§5, §6) (3 h)

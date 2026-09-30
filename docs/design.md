@@ -120,11 +120,13 @@ class ModelProvider(Protocol):
     async def generate(self, messages, system, **opts) -> ModelResponse: ...
     def stream(self, messages, system, **opts) -> AsyncIterator[str | ModelResponse]: ...
 ```
-- `ModelResponse` has text, model name, and input/output token counts, so cost is logged the same way for every provider.
+- `ModelResponse` has text, the model that actually answered, input/output token counts, and `stop_reason` (`"max_tokens"` means the reply was cut off), so cost is logged the same way for every provider.
 - `stream` is a plain `def` that returns an async iterator. It yields `str` chunks, and its **last item is a `ModelResponse`** with the full text and token counts. The Anthropic adapter gets this from the SDK's final message.
 - Options: `max_tokens` is **4096** in normal mode and **150** in brief mode.
+- **Refusals (Anthropic):** the model's safety classifiers can decline a request, returned as a normal reply with `stop_reason: "refusal"`. The adapter opts into server-side fallbacks (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`), so some declines are retried on another model automatically. A decline that isn't rescued raises `ProviderRefusalError` (with its category).
+- HTTP status mapping (Anthropic): 401/403 → auth · 402/429 → rate limit (incl. billing/spend limit) · 408/409/5xx/529 and network errors → unavailable · other 4xx (incl. 404 unknown model) → bad request.
 - Timeouts and retries use the SDK's built-in settings (`timeout=60s`, `max_retries=2`). No custom retry loop. Never retry once the first token has been sent.
-- `providers/errors.py` defines `ProviderError` and its subclasses `ProviderAuthError`, `ProviderRateLimitError`, `ProviderUnavailableError` and `ProviderBadRequestError`. Adapters convert SDK exceptions into these. The API layer converts them into HTTP codes (before streaming) or an SSE `error` event (after).
+- `providers/errors.py` defines `ProviderError` and its subclasses `ProviderAuthError`, `ProviderRateLimitError`, `ProviderUnavailableError`, `ProviderBadRequestError`, `ProviderRefusalError` and `UnknownProviderError`. Adapters convert SDK exceptions into these. The API layer converts them into HTTP codes (before streaming) or an SSE `error` event (after).
 - **History window:** only the last **20 messages** of a conversation are sent to the model. Only the current turn's images are sent; older images become the text `[image omitted]`.
 
 ## 7. Data model (SQLite)

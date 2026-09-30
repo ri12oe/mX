@@ -36,6 +36,17 @@ class ProviderBadRequestError(ProviderError):
     code = "provider_bad_request"
 
 
+class ProviderRefusalError(ProviderError):
+    """The model's safety classifiers declined the request (a normal 200 reply
+    with stop_reason "refusal"), and no fallback model rescued it."""
+
+    code = "provider_refused"
+
+    def __init__(self, message: str, category: str | None = None) -> None:
+        super().__init__(message)
+        self.category = category
+
+
 class UnknownProviderError(ProviderError):
     """PRIMARY_PROVIDER names an adapter that doesn't exist."""
 
