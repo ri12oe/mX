@@ -25,7 +25,7 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 - [x] 9. `GET /conversations`, `GET /conversations/{id}`, `DELETE /conversations/{id}` with cascade and 404s; tests (§5) (1–2 h)
 
 ## Week 3 — Personality & inputs
-- [ ] Image input on `/chat` (base64, limits, stored in `images`) + `GET /images/{id}` (§5, §7)
+- [x] Image input on `/chat` (base64, limits, stored in `images`) + `GET /images/{id}` (§5, §7)
 - [ ] Tune `prompts/mx_system_v1.md` against the eval set; grow evals toward 50
 
 ## Week 4 — Interface & quality

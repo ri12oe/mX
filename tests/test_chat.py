@@ -186,8 +186,9 @@ def test_history_window_is_capped_and_starts_with_user(client: TestClient, conn:
 
 
 def test_build_history_drops_leading_assistant_messages():
-    stored = [{"role": "assistant", "content": "a0"}, {"role": "user", "content": "q1"},
-              {"role": "assistant", "content": "a1"}]
+    stored = [{"role": "assistant", "content": "a0", "image_refs": []},
+              {"role": "user", "content": "q1", "image_refs": []},
+              {"role": "assistant", "content": "a1", "image_refs": []}]
     history = chat_module.build_history(stored, "q2")
     assert [(m.role, m.content) for m in history] == [("user", "q1"), ("assistant", "a1"), ("user", "q2")]
 

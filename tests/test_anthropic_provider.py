@@ -1,5 +1,6 @@
 """AnthropicProvider.generate with the SDK mocked (no network, no cost)."""
 import asyncio
+import base64
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -17,7 +18,7 @@ from providers.anthropic_provider import (
     AnthropicProvider,
     map_error,
 )
-from providers.base import Message, ModelResponse
+from providers.base import ImageData, Message, ModelResponse
 from providers.errors import (
     ProviderAuthError,
     ProviderBadRequestError,
@@ -206,10 +207,26 @@ def test_generate_rejects_unknown_options():
         asyncio.run(provider.generate(HISTORY, "sys", max_token=150))
 
 
-def test_images_are_rejected_until_week_3():
-    provider, _ = provider_with(make_message())
-    with pytest.raises(ProviderBadRequestError):
-        asyncio.run(provider.generate([Message("user", "look", images=["aGk="])], "sys"))
+def test_images_are_sent_as_base64_blocks_before_the_text():
+    provider, fake = provider_with(make_message())
+    png = ImageData("image/png", b"\x89PNG\r\n\x1a\nfake")
+    jpeg = ImageData("image/jpeg", b"\xff\xd8\xfffake")
+    asyncio.run(provider.generate([Message("user", "Compare these", images=[png, jpeg])], "sys"))
+
+    content = fake.kwargs["messages"][0]["content"]
+    assert [block["type"] for block in content] == ["image", "image", "text"]
+    assert content[0]["source"] == {
+        "type": "base64", "media_type": "image/png",
+        "data": base64.standard_b64encode(png.data).decode("ascii"),
+    }
+    assert content[1]["source"]["media_type"] == "image/jpeg"
+    assert content[2] == {"type": "text", "text": "Compare these"}
+
+
+def test_messages_without_images_stay_plain_text():
+    provider, fake = provider_with(make_message())
+    asyncio.run(provider.generate([Message("user", "hi", images=None)], "sys"))
+    assert fake.kwargs["messages"][0] == {"role": "user", "content": "hi"}
 
 
 # --- Response handling -----------------------------------------------------

@@ -31,6 +31,15 @@ class UsageRecord:
 
 
 @dataclass(frozen=True)
+class NewImage:
+    """An image attached to the user message of a turn."""
+
+    id: str
+    media_type: str
+    data: bytes
+
+
+@dataclass(frozen=True)
 class Turn:
     """One user message plus the assistant reply, saved together."""
 
@@ -41,6 +50,7 @@ class Turn:
     assistant_message_id: str
     assistant_content: str
     usage: UsageRecord
+    user_images: tuple[NewImage, ...] = ()
 
 
 class SchemaVersionError(RuntimeError):
@@ -101,7 +111,8 @@ def save_turn(conn: sqlite3.Connection, turn: Turn, now: str | None = None) -> N
     """Save a finished turn atomically (design.md §5): all rows or none.
 
     Creates the conversation if it's new (titled from the user message),
-    otherwise bumps its updated_at.
+    otherwise bumps its updated_at. The user message's images are stored in
+    the same transaction and listed in its image_refs.
     """
     now = now or now_iso()
     with conn:  # one transaction: commit on success, roll back on any error
@@ -114,7 +125,10 @@ def save_turn(conn: sqlite3.Connection, turn: Turn, now: str | None = None) -> N
             (turn.conversation_id, make_title(turn.user_content), turn.user_created_at, now),
         )
         _insert_message(conn, turn.user_message_id, turn.conversation_id, "user",
-                        turn.user_content, turn.user_created_at)
+                        turn.user_content, turn.user_created_at,
+                        image_refs=[image.id for image in turn.user_images])
+        for image in turn.user_images:
+            _insert_image(conn, image, turn.user_message_id, turn.user_created_at)
         _insert_message(conn, turn.assistant_message_id, turn.conversation_id, "assistant",
                         turn.assistant_content, now)
         _insert_usage(conn, turn.assistant_message_id, turn.usage, now)
@@ -122,12 +136,21 @@ def save_turn(conn: sqlite3.Connection, turn: Turn, now: str | None = None) -> N
 
 def _insert_message(
     conn: sqlite3.Connection, message_id: str, conversation_id: str,
-    role: str, content: str, created_at: str,
+    role: str, content: str, created_at: str, image_refs: list[str] | None = None,
 ) -> None:
     conn.execute(
-        "INSERT INTO messages (id, conversation_id, role, content, created_at)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (message_id, conversation_id, role, content, created_at),
+        "INSERT INTO messages (id, conversation_id, role, content, image_refs, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (message_id, conversation_id, role, content, json.dumps(image_refs or []), created_at),
+    )
+
+
+def _insert_image(
+    conn: sqlite3.Connection, image: NewImage, message_id: str, created_at: str
+) -> None:
+    conn.execute(
+        "INSERT INTO images (id, message_id, media_type, data, created_at) VALUES (?, ?, ?, ?, ?)",
+        (image.id, message_id, image.media_type, image.data, created_at),
     )
 
 
@@ -200,6 +223,12 @@ def get_recent_messages(
         (conversation_id, limit),
     ).fetchall()
     return [_message_dict(r) for r in reversed(rows)]
+
+
+def get_image(conn: sqlite3.Connection, image_id: str) -> tuple[str, bytes] | None:
+    """(media_type, bytes) for a stored image, or None if unknown."""
+    row = conn.execute("SELECT media_type, data FROM images WHERE id = ?", (image_id,)).fetchone()
+    return None if row is None else (row["media_type"], row["data"])
 
 
 def _message_dict(row: sqlite3.Row) -> dict[str, Any]:

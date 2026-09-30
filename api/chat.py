@@ -20,10 +20,11 @@ from pydantic import BaseModel, Field, field_validator
 from api import db
 from api.config import settings
 from api.deps import get_db, get_provider, require_key
+from api.images import ImageError, decode_images
 from api.pricing import cost_usd
 from api.prompts import MODE_OPTIONS, Mode, SystemPrompt, load_system_prompt
 from providers import ModelProvider
-from providers.base import Message, ModelResponse
+from providers.base import ImageData, Message, ModelResponse
 from providers.errors import (
     ProviderError,
     ProviderRateLimitError,
@@ -35,15 +36,19 @@ logger = logging.getLogger("mx.chat")
 router = APIRouter()
 
 MAX_MESSAGE_CHARS = 20_000
-MAX_BODY_BYTES = 25 * 1024 * 1024
+MAX_BODY_BYTES = 30 * 1024 * 1024  # fits 4 × 5 MB images as base64 (+33%) plus text
 HISTORY_WINDOW = 20  # max messages sent to the model, including the new one
+IMAGE_OMITTED = "[image omitted]"
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
-    images: list[str] = Field(default_factory=list)
+    images: list[str] = Field(
+        default_factory=list,
+        description="Up to 4 base64 images (JPEG, PNG, GIF, WebP; max 5 MB each). A data: URL is also accepted.",
+    )
     mode: Mode = "normal"
 
     @field_validator("message")
@@ -51,13 +56,6 @@ class ChatRequest(BaseModel):
     def _not_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("message must not be blank")
-        return value
-
-    @field_validator("images")
-    @classmethod
-    def _no_images_yet(cls, value: list[str]) -> list[str]:
-        if value:
-            raise ValueError("Image input arrives in Week 3.")
         return value
 
 
@@ -70,6 +68,7 @@ class PendingTurn:
     assistant_message_id: str
     user_content: str
     user_created_at: str
+    user_images: tuple[db.NewImage, ...]
     history: list[Message]
     started: float  # time.monotonic() when the request arrived
 
@@ -100,8 +99,14 @@ async def chat(
 
 
 def start_turn(conn: sqlite3.Connection, req: ChatRequest) -> PendingTurn:
-    """Check the conversation exists (404 if not) and build the history to send."""
+    """Check images (422) and the conversation (404), then build the history to send."""
     started = time.monotonic()
+    try:
+        images = decode_images(req.images)
+    except ImageError as exc:
+        raise HTTPException(
+            status_code=422, detail={"code": "invalid_image", "message": str(exc)}
+        ) from None
     if req.conversation_id is None:
         conversation_id, stored = db.new_id(), []
     elif db.conversation_exists(conn, req.conversation_id):
@@ -115,17 +120,29 @@ def start_turn(conn: sqlite3.Connection, req: ChatRequest) -> PendingTurn:
         assistant_message_id=db.new_id(),
         user_content=req.message,
         user_created_at=db.now_iso(),
-        history=build_history(stored, req.message),
+        user_images=tuple(db.NewImage(db.new_id(), i.media_type, i.data) for i in images),
+        history=build_history(stored, req.message, images),
         started=started,
     )
 
 
-def build_history(stored: list[dict[str, Any]], new_message: str) -> list[Message]:
-    """Past messages plus the new one. Must start with a user message."""
-    messages = [Message(role=m["role"], content=m["content"]) for m in stored]
+def build_history(
+    stored: list[dict[str, Any]], new_message: str, images: list[ImageData] | None = None
+) -> list[Message]:
+    """Past messages plus the new one. Must start with a user message.
+
+    Only the new message carries images; older images are replaced by a text
+    marker so the model knows one was there (design.md §6).
+    """
+    messages = [Message(role=m["role"], content=with_image_markers(m)) for m in stored]
     while messages and messages[0].role != "user":
         messages.pop(0)
-    return [*messages, Message(role="user", content=new_message)]
+    return [*messages, Message(role="user", content=new_message, images=images or None)]
+
+
+def with_image_markers(message: dict[str, Any]) -> str:
+    markers = [IMAGE_OMITTED] * len(message["image_refs"])
+    return "\n".join([*markers, message["content"]])
 
 
 async def first_item(
@@ -224,6 +241,7 @@ def save(
         user_message_id=pending.user_message_id,
         user_content=pending.user_content,
         user_created_at=pending.user_created_at,
+        user_images=pending.user_images,
         assistant_message_id=pending.assistant_message_id,
         assistant_content=reply.text,
         usage=db.UsageRecord(

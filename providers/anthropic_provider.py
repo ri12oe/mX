@@ -1,4 +1,5 @@
 """Anthropic adapter (design.md §6). The only module that imports the anthropic SDK."""
+import base64
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -121,9 +122,22 @@ class AnthropicProvider:
 
 
 def to_message_param(message: Message) -> BetaMessageParam:
-    if message.images:
-        raise ProviderBadRequestError("Image input isn't supported yet (Week 3).")
-    return {"role": message.role, "content": message.content}  # type: ignore[typeddict-item]
+    """Plain text, or image blocks followed by the text (images first works best)."""
+    if not message.images:
+        return {"role": message.role, "content": message.content}  # type: ignore[typeddict-item]
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.media_type,
+                "data": base64.standard_b64encode(image.data).decode("ascii"),
+            },
+        }
+        for image in message.images
+    ]
+    blocks.append({"type": "text", "text": message.content})
+    return {"role": message.role, "content": blocks}  # type: ignore[typeddict-item]
 
 
 def to_model_response(response: BetaMessage) -> ModelResponse:
