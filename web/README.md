@@ -30,7 +30,8 @@ You need two terminals, both started from the project root.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Dev server on port 5173 (the origin the API's CORS allows) |
-| `npm test` | Unit tests (Vitest): SSE parsing, API client, helpers |
+| `npm test` | Tests (Vitest): SSE parsing, API client, helpers, components, and App flows against a faked API |
+| `npm run coverage` | Tests with a coverage report |
 | `npm run typecheck` | TypeScript check |
 | `npm run build` | Type-check and build to `dist/` |
 

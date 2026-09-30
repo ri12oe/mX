@@ -161,3 +161,77 @@ def test_report_table_and_totals(tmp_path: Path):
     assert [line.split("|")[1].strip() for line in lines if line.startswith("| p")] == ["p2", "p4", "p10"]
     assert "said $0.10" in text
     assert "Passed 2/3 graded" in text and "total cost $0.03" in text
+
+
+# --- Loading edge cases --------------------------------------------------------
+
+
+def test_load_cases_skips_blank_lines_and_names_a_bad_line(tmp_path: Path):
+    good = '{"id": "a", "category": "c", "prompt": "p", "expect": "e"}'
+    path = tmp_path / "prompts.jsonl"
+    path.write_text(f"{good}\n\n", encoding="utf-8")
+    assert [c.id for c in runner.load_cases(path)] == ["a"]
+
+    path.write_text(f"{good}\n\n{{not json\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="line 3"):
+        runner.load_cases(path)
+
+
+def test_load_image_rejects_non_images(tmp_path: Path):
+    path = tmp_path / "notes.png"
+    path.write_bytes(b"just text")
+    with pytest.raises(ValueError, match="not a JPEG, PNG, GIF, or WebP"):
+        runner.load_image(path)
+
+
+def test_report_explains_failed_auto_checks(tmp_path: Path):
+    results = tmp_path / "run.jsonl"
+    write_rows(results, [row("p2", "brief", {"pass": False, "sentences": 3, "markdown": False})])
+    assert "auto: 3 sentences, markdown=False" in runner.report(results)
+
+
+# --- Command line ----------------------------------------------------------------
+
+
+def use_fake(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fake: FakeProvider) -> None:
+    monkeypatch.setattr(runner, "create_provider", lambda *args, **kwargs: fake)
+    monkeypatch.setattr(runner, "RESULTS_DIR", tmp_path)
+
+
+def test_main_dry_run_lists_cases_without_calling_the_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+):
+    fake = FakeProvider()
+    use_fake(monkeypatch, tmp_path, fake)
+    assert runner.main(["--dry-run", "--ids", "p2,p19,p21"]) == 0
+    out = capsys.readouterr().out
+    assert "3 cases" in out and "+1 image(s)" in out and "+2 history" in out
+    assert fake.calls == [] and list(tmp_path.iterdir()) == []
+
+
+def test_main_runs_writes_results_and_prints_the_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+):
+    use_fake(monkeypatch, tmp_path, FakeProvider(chunks=["It is Tokyo."], model="claude-opus-5-5"))
+    assert runner.main(["--ids", "p2,p4"]) == 0
+    files = list(tmp_path.glob("*_mx_system_v3.jsonl"))
+    assert len(files) == 1 and len(files[0].read_text(encoding="utf-8").splitlines()) == 2
+    out = capsys.readouterr().out
+    assert "Wrote 2 rows" in out and "| p2 |" in out and "Passed 1/1 graded" in out
+
+
+def test_main_reports_cases_skipped_by_the_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+):
+    fake = FakeProvider(model="claude-opus-5-5", input_tokens=1_000_000, output_tokens=0)  # $4 per case
+    use_fake(monkeypatch, tmp_path, fake)
+    runner.main(["--ids", "p2,p4,p5", "--max-cost", "5", "--concurrency", "1"])
+    assert "Budget reached: skipped" in capsys.readouterr().out
+    assert len(fake.calls) == 2
+
+
+def test_main_report_mode_prints_an_existing_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    results = tmp_path / "run.jsonl"
+    write_rows(results, [row("p4")])
+    assert runner.main(["--report", str(results)]) == 0
+    assert "| p4 |" in capsys.readouterr().out

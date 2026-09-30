@@ -23,6 +23,8 @@ python try_mx.py
 ```
 Real-API smoke test (opt-in, about $0.0002): `pytest -m live -s`
 
+Coverage: `pytest --cov` (settings in `.coveragerc`) and `npm run coverage` in `web/`.
+
 ## Layout
 | Path | What |
 |---|---|

@@ -301,3 +301,46 @@ def test_failed_turn_is_logged_as_warning(client: TestClient, fake: FakeProvider
         post_chat(client)
     record = next(r for r in caplog.records if r.name == "mx.chat")
     assert record.levelno == logging.WARNING and "status=provider_unavailable" in record.getMessage()
+
+
+# --- Providers that break the stream contract --------------------------------
+
+
+class NoFinalProvider:
+    """Yields `chunks` and then stops without the final ModelResponse."""
+
+    name = "broken"
+
+    def __init__(self, chunks: list[str]) -> None:
+        self.chunks = chunks
+
+    async def generate(self, messages: Any, system: str, **opts: Any) -> Any:
+        raise NotImplementedError
+
+    async def stream(self, messages: Any, system: str, **opts: Any):
+        for chunk in self.chunks:
+            yield chunk
+
+
+def test_empty_stream_is_502_and_saves_nothing(conn: sqlite3.Connection):
+    app.dependency_overrides[get_db] = lambda: conn
+    app.dependency_overrides[get_provider] = lambda: NoFinalProvider([])
+    try:
+        r = post_chat(TestClient(app))
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 502
+    assert r.json()["detail"]["code"] == "provider_error"
+    assert count(conn, "messages") == 0
+
+
+def test_stream_ending_without_final_message_is_an_error_event(conn: sqlite3.Connection):
+    app.dependency_overrides[get_db] = lambda: conn
+    app.dependency_overrides[get_provider] = lambda: NoFinalProvider(["partial ", "text"])
+    try:
+        events = parse_sse(post_chat(TestClient(app)).text)
+    finally:
+        app.dependency_overrides.clear()
+    assert [name for name, _ in events] == ["meta", "delta", "delta", "error"]
+    assert events[-1][1]["code"] == "provider_error"
+    assert count(conn, "messages") == 0
