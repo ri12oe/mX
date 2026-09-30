@@ -22,7 +22,7 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 - [x] 6. Anthropic adapter `stream()`: final item is a `ModelResponse`, mocked tests + one `@pytest.mark.live` smoke test (§6, §11) (2 h)
 - [x] 7. Prompt loader (`api/prompts.py`) and pricing (`api/pricing.py`) with cost function, plus tests (§8, §9) (1 h)
 - [x] 8. `POST /chat` with SSE: meta/delta/done/error events, 20-message history window, atomic save, usage row, log line; tests with `FakeProvider` incl. error path (§5, §6) (3 h)
-- [ ] 9. `GET /conversations`, `GET /conversations/{id}`, `DELETE /conversations/{id}` with cascade and 404s; tests (§5) (1–2 h)
+- [x] 9. `GET /conversations`, `GET /conversations/{id}`, `DELETE /conversations/{id}` with cascade and 404s; tests (§5) (1–2 h)
 
 ## Week 3 — Personality & inputs
 - [ ] Image input on `/chat` (base64, limits, stored in `images`) + `GET /images/{id}` (§5, §7)
