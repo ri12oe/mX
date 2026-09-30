@@ -3,7 +3,7 @@
 - required: `id`, `category`, `prompt`, `expect` (what a good answer looks like)
 - optional: `mode` (`normal` / `brief`), `history` (earlier `{role, content}` turns), `images` (paths under `evals/images/`)
 
-31 prompts now; goal 50 by Week 4.
+50 prompts across 16 categories (math, coding, vision, memory, brevity, honesty, and more).
 
 ## Running
 From the project root, with the venv active. **Real runs call the API and cost money** (about $0.50–$1 for the full set).

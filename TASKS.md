@@ -31,7 +31,7 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 ## Week 4 — Interface & quality
 - [x] Install Node.js, scaffold React + Vite app in `web/` (decide JS vs. TypeScript) → TypeScript
 - [x] React chat UI with streaming replies (`fetch` + stream reader, §5)
-- [ ] Eval runner script (50 prompts, auto-checks for `brief`, §12)
+- [x] Eval runner script (50 prompts, auto-checks for `brief`, §12) → runner built in Week 3; 50 prompts, v3 baseline 47/50
 
 ## Week 5 — Ship
 - [ ] Test coverage pass
