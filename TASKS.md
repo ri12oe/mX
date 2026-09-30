@@ -10,7 +10,7 @@
 - [x] Get provider API key(s), put in `.env`, set a monthly spend limit (30 min)
 - [x] Decide open items in design.md: provider, assistant name, UI stack (1 hr)
 - [x] Review design.md with the architect agent and refine it → v0.3 (1–2 hrs)
-- [ ] Write 10 starter eval prompts in `evals/prompts.jsonl` (1 hr)
+- [x] Write 10 starter eval prompts in `evals/prompts.jsonl` (1 hr) → 18 written
 
 ## Week 2 — The brain (~15 hrs)
 Build in this order. Section numbers refer to `docs/design.md` v0.3.
