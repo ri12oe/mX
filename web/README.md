@@ -1,1 +1,1 @@
-Web chat UI goes here (Week 4).
+React + Vite chat UI goes here (Week 4). See docs/design.md section 9.
