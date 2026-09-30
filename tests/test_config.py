@@ -31,7 +31,8 @@ def test_strong_key_is_accepted():
     assert make_settings(STRONG_KEY).mx_api_key == STRONG_KEY
 
 
-def test_defaults_match_design():
+def test_defaults_match_design(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("DB_PATH", raising=False)  # conftest points it at a temp dir
     s = make_settings(STRONG_KEY)
     assert s.db_path == "./data/mx.db"
     assert s.cors_origins == ["http://localhost:5173"]
