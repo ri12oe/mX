@@ -57,7 +57,9 @@ Out of scope (later phases): backup provider adapter, tools/function calling (in
 ```
 
 Module layout:
-- `api/main.py` — app, routes, dependencies (`require_key`, `get_db`, `get_provider`)
+- `api/main.py` — app setup, `/health`, `/whoami`
+- `api/deps.py` — dependencies (`require_key`, `get_db`, `get_provider`)
+- `api/chat.py` — `POST /chat`
 - `api/config.py` — settings (§10)
 - `api/db.py` + `api/schema.sql` — SQLite access (§7)
 - `api/prompts.py` — prompt loader (§8)
@@ -99,11 +101,11 @@ All routes except `/health` require header `X-mX-Key`.
 |---|---|---|
 | `meta` | `{conversation_id, message_id}` | First, before any text |
 | `delta` | `{text}` | Each text chunk |
-| `done` | `{usage: {model, input_tokens, output_tokens, cost_usd}}` | Reply finished and saved |
+| `done` | `{usage: {model, input_tokens, output_tokens, cost_usd}, stop_reason}` | Reply finished and saved (`stop_reason: "max_tokens"` = reply was cut off) |
 | `error` | `{code, message}` | Failure after streaming started; stream then ends |
 
 Errors **before** streaming starts are normal JSON HTTP errors:
-401 bad/missing key · 404 unknown `conversation_id` · 413 too large · 422 validation · 502/503 provider failure.
+401 bad/missing key · 404 unknown `conversation_id` · 413 too large · 422 validation or the model declined (`provider_refused`) · 502 provider auth/bad request · 503 provider rate-limited or unavailable. Provider errors have `detail: {code, message}`. The route waits for the first chunk before responding, so provider failures before any text become HTTP errors. After streaming starts, failures arrive as an `error` event, including `save_failed` if the database write fails.
 
 Clients must read the stream with `fetch` + a `ReadableStream` reader. The browser's `EventSource` can't send POST bodies or custom headers.
 
@@ -134,7 +136,7 @@ class ModelProvider(Protocol):
 - HTTP status mapping (Anthropic): 401/403 → auth · 402/429 → rate limit (incl. billing/spend limit) · 408/409/5xx/529 and network errors → unavailable · other 4xx (incl. 404 unknown model) → bad request.
 - Timeouts and retries use the SDK's built-in settings: connect timeout 10 s, read timeout 10 min (a long reasoned reply can take minutes; a shorter timeout would cut it off and the retry would bill it again), `max_retries=2`. No custom retry loop. Never retry once the first token has been sent.
 - `providers/errors.py` defines `ProviderError` and its subclasses `ProviderAuthError`, `ProviderRateLimitError`, `ProviderUnavailableError`, `ProviderBadRequestError`, `ProviderRefusalError` and `UnknownProviderError`. Adapters convert SDK exceptions into these. The API layer converts them into HTTP codes (before streaming) or an SSE `error` event (after).
-- **History window:** only the last **20 messages** of a conversation are sent to the model. Only the current turn's images are sent; older images become the text `[image omitted]`.
+- **History window:** at most **20 messages** are sent to the model: the last 19 stored plus the new one, trimmed so the history always starts with a user message. Only the current turn's images are sent; older images become the text `[image omitted]`.
 
 ## 7. Data model (SQLite)
 Uses the standard-library `sqlite3` module with sync calls; no ORM and no migration tool.
