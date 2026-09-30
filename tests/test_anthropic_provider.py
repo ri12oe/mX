@@ -26,7 +26,7 @@ from providers.errors import (
     ProviderUnavailableError,
 )
 
-MODEL = "claude-sonnet-5-5"
+MODEL = "claude-opus-5-5"
 HISTORY = [
     Message(role="user", content="What is 2 + 2?"),
     Message(role="assistant", content="4."),
@@ -79,7 +79,8 @@ def status_error(status: int, message: str = "boom") -> anthropic.APIStatusError
 
 def test_real_client_uses_design_timeout_and_retries():
     provider = AnthropicProvider(api_key="sk-ant-test", model=MODEL)
-    assert provider._client.timeout == 60.0
+    timeout = provider._client.timeout
+    assert (timeout.connect, timeout.read) == (10.0, 600.0)  # fast connect, room for long replies
     assert provider._client.max_retries == 2
 
 
@@ -127,6 +128,24 @@ def test_generate_passes_max_tokens():
     assert fake.kwargs["max_tokens"] == 150
 
 
+def test_generate_sends_effort_as_output_config():
+    provider, fake = provider_with(make_message())
+    asyncio.run(provider.generate(HISTORY, "sys", effort="high"))
+    assert fake.kwargs["output_config"] == {"effort": "high"}
+
+
+def test_generate_omits_effort_when_not_given():
+    provider, fake = provider_with(make_message())
+    asyncio.run(provider.generate(HISTORY, "sys"))
+    assert "output_config" not in fake.kwargs
+
+
+def test_generate_rejects_invalid_effort():
+    provider, _ = provider_with(make_message())
+    with pytest.raises(ValueError, match="effort"):
+        asyncio.run(provider.generate(HISTORY, "sys", effort="extreme"))
+
+
 def test_generate_rejects_unknown_options():
     provider, _ = provider_with(make_message())
     with pytest.raises(TypeError, match="max_token"):
@@ -166,8 +185,8 @@ def test_truncated_reply_is_reported():
 
 def test_reports_the_model_that_actually_answered():
     """After a server-side fallback, response.model names the fallback model."""
-    provider, _ = provider_with(make_message(model="claude-sonnet-5"))
-    assert asyncio.run(provider.generate(HISTORY, "sys")).model == "claude-sonnet-5"
+    provider, _ = provider_with(make_message(model="claude-opus-5"))
+    assert asyncio.run(provider.generate(HISTORY, "sys")).model == "claude-opus-5"
 
 
 def test_refusal_raises_with_category():

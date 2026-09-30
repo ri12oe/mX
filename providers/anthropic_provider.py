@@ -15,9 +15,12 @@ from providers.errors import (
     ProviderUnavailableError,
 )
 
-DEFAULT_TIMEOUT_S = 60.0
+# Connecting should be quick; a long, carefully reasoned reply can take minutes.
+# A short read timeout would cut those off and the SDK would retry (and bill) them.
+DEFAULT_TIMEOUT = anthropic.Timeout(600.0, connect=10.0)
 DEFAULT_MAX_RETRIES = 2  # SDK retries connection errors, 408, 409, 429, and 5xx
-DEFAULT_MAX_TOKENS = 4096
+DEFAULT_MAX_TOKENS = 16000  # a ceiling, not a cost: only tokens actually used are billed
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
 # If the model's safety classifiers decline a request, let Anthropic retry it on
 # its recommended fallback model instead of returning the refusal.
@@ -34,7 +37,7 @@ class AnthropicProvider:
         api_key: str,
         model: str,
         *,
-        timeout: float = DEFAULT_TIMEOUT_S,
+        timeout: float | anthropic.Timeout = DEFAULT_TIMEOUT,
         max_retries: int = DEFAULT_MAX_RETRIES,
         client: Any = None,
     ) -> None:
@@ -50,10 +53,18 @@ class AnthropicProvider:
         system: str,
         *,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        effort: str | None = None,
         **opts: Any,
     ) -> ModelResponse:
-        """Send the conversation and return the whole reply."""
+        """Send the conversation and return the whole reply.
+
+        `effort` controls how hard the model thinks (and how many tokens it
+        spends). None uses the model's default.
+        """
         _reject_unknown_opts(opts)
+        extra: dict[str, Any] = {}
+        if effort is not None:
+            extra["output_config"] = {"effort": _checked_effort(effort)}
         try:
             response = await self._client.beta.messages.create(
                 model=self.model,
@@ -62,6 +73,7 @@ class AnthropicProvider:
                 messages=[to_message_param(m) for m in messages],
                 betas=[FALLBACK_BETA],
                 fallbacks="default",
+                **extra,
             )
         except anthropic.APIError as exc:
             raise map_error(exc) from exc
@@ -119,6 +131,12 @@ def map_error(exc: anthropic.APIError) -> ProviderError:
     if 400 <= status < 500:  # 400, 404 (unknown model), 413, 422
         return ProviderBadRequestError(detail)
     return ProviderError(detail)
+
+
+def _checked_effort(effort: str) -> str:
+    if effort not in EFFORT_LEVELS:
+        raise ValueError(f"effort must be one of {', '.join(EFFORT_LEVELS)}, got {effort!r}")
+    return effort
 
 
 def _reject_unknown_opts(opts: dict[str, Any]) -> None:
