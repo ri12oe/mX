@@ -346,3 +346,29 @@ def test_stream_ending_without_final_message_is_an_error_event(conn: sqlite3.Con
     assert [name for name, _ in events] == ["meta", "delta", "delta", "error"]
     assert events[-1][1]["code"] == "provider_error"
     assert count(conn, "messages") == 0
+
+
+class CrashingProvider:
+    """Yields some text, then fails with a non-provider exception (a bug)."""
+
+    name = "crashing"
+
+    async def generate(self, messages: Any, system: str, **opts: Any) -> Any:
+        raise NotImplementedError
+
+    async def stream(self, messages: Any, system: str, **opts: Any):
+        yield "partial "
+        raise ValueError("unexpected bug")
+
+
+def test_unexpected_error_mid_stream_sends_internal_error(conn: sqlite3.Connection, caplog: pytest.LogCaptureFixture):
+    app.dependency_overrides[get_db] = lambda: conn
+    app.dependency_overrides[get_provider] = lambda: CrashingProvider()
+    try:
+        with caplog.at_level(logging.INFO, logger="mx.chat"):
+            events = parse_sse(post_chat(TestClient(app)).text)
+    finally:
+        app.dependency_overrides.clear()
+    assert events[-1] == ("error", {"code": "internal_error", "message": "Something went wrong on the server."})
+    assert count(conn, "messages") == 0
+    assert "status=internal_error" in caplog.text and "Traceback" in caplog.text

@@ -173,6 +173,38 @@ describe("chatting", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
   });
 
+  it("recovers after a failed first turn: the retry starts a new conversation", async () => {
+    const bodies: { conversation_id?: string }[] = [];
+    api.chat = (init) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return bodies.length === 1
+        ? streamResponse([sse([["meta", { conversation_id: "unsaved", message_id: "m1" }], ["error", { code: "provider_unavailable", message: "Lost." }]])])
+        : streamResponse([sse([["meta", { conversation_id: "c2", message_id: "m2" }], ["delta", { text: "Second try works." }], ["done", { usage: { model: "m", input_tokens: 1, output_tokens: 1, cost_usd: null }, stop_reason: "end_turn" }]])]);
+    };
+    await renderSignedIn();
+    send("First try");
+    await screen.findByText(/Lost\. Nothing from this turn was saved\./);
+    send("Second try");
+    await screen.findByText("Second try works.");
+    expect(bodies[1].conversation_id).toBeUndefined(); // not the unsaved id
+  });
+
+  it("recovers after stopping a first turn", async () => {
+    const bodies: { conversation_id?: string }[] = [];
+    api.chat = (init) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return streamResponse([sse([["meta", { conversation_id: `unsaved-${bodies.length}`, message_id: "m" }], ["delta", { text: `Reply ${bodies.length}` }]])], init.signal, true);
+    };
+    await renderSignedIn();
+    send("One");
+    await screen.findByText("Reply 1");
+    fireEvent.click(screen.getByRole("button", { name: "Stop generating" }));
+    await screen.findByText("Stopped. This reply wasn't saved.");
+    send("Two");
+    await screen.findByText("Reply 2");
+    expect(bodies[1].conversation_id).toBeUndefined();
+  });
+
   it("shows a mid-stream error from the server", async () => {
     api.chat = () =>
       streamResponse([sse([["meta", { conversation_id: "c1", message_id: "m1" }], ["error", { code: "provider_unavailable", message: "Connection lost." }]])]);

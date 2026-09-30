@@ -1,11 +1,12 @@
-"""Quick manual test: chat with mX in the terminal, with streamed replies.
+"""Terminal client for quick prompt experiments: chat with mX, with streamed replies.
 
 Run:   python try_mx.py          (normal mode: effort high)
        python try_mx.py brief    (brief mode: effort low, cheaper)
 Quit:  Ctrl+C, or type "exit"
 
 Each message costs real money (usually 1-3 cents in normal mode).
-Temporary helper until POST /chat exists (Week 2, task 8). Not saved to the database.
+Talks to the provider directly (same prompt and mode settings as POST /chat) and saves nothing.
+For normal use, run start-mx.ps1 and use the web app.
 """
 import asyncio
 import sys

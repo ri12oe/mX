@@ -19,8 +19,8 @@ You need two terminals, both started from the project root.
    the page and the API share one origin and the HttpOnly session cookie just works. Nothing is stored in localStorage
    except the Normal/Brief choice.
 
-In production the API serves the built app itself (`npm run build` → `web/dist`, done by the Dockerfile); see
-`docs/deploy.md`.
+For everyday use, `start-mx.ps1` in the project root builds the app (`npm run build` → `web/dist`) when it has
+changed and the API serves it at http://localhost:8000.
 
 ## Features
 - Password sign-in; the server sets an HttpOnly session cookie (30 days). **Sign out** is in the sidebar.
@@ -34,7 +34,7 @@ In production the API serves the built app itself (`npm run build` → `web/dist
 ## Scripts
 | Command | What it does |
 |---|---|
-| `npm run dev` | Dev server on port 5173 (the origin the API's CORS allows) |
+| `npm run dev` | Dev server on port 5173; API paths are proxied to uvicorn on port 8000 |
 | `npm test` | Tests (Vitest): SSE parsing, API client, helpers, components, and App flows against a faked API |
 | `npm run coverage` | Tests with a coverage report |
 | `npm run typecheck` | TypeScript check |

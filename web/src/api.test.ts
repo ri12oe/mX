@@ -132,3 +132,12 @@ describe("other calls", () => {
     await expect(listConversations()).rejects.toMatchObject({ name: "AbortError" });
   });
 });
+
+describe("incomplete streams", () => {
+  it("rejects when the stream ends without done or error", async () => {
+    mockFetch(sseResponse(['event: meta\ndata: {"conversation_id": "c", "message_id": "m"}\n\nevent: delta\ndata: {"text": "partial"}\n\n']));
+    const events: ChatEvent[] = [];
+    await expect(streamChat({ message: "hi", mode: "normal" }, (e) => events.push(e))).rejects.toMatchObject({ code: "incomplete" });
+    expect(events.map((e) => e.type)).toEqual(["meta", "delta"]); // partial text was still delivered
+  });
+});

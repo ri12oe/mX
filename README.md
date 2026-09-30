@@ -15,6 +15,8 @@ If it's already running, the script just opens the browser.
 **Back up your chats.** They live in `data/mx.db`, which isn't in git. Copy that file somewhere safe now and then
 (stop mX first, or copy `mx.db`, `mx.db-wal`, and `mx.db-shm` together).
 
+Sessions last 30 days. To sign out every device at once, change `MX_API_KEY` in `.env` and restart mX.
+
 mX isn't published online. `Dockerfile`, `fly.toml`, and `docs/deploy.md` are kept in case that changes.
 
 ## Development setup
@@ -31,7 +33,8 @@ Test auth:
 ```bash
 curl -H "X-mX-Key: <your key>" http://127.0.0.1:8000/whoami
 ```
-Chat with mX in the terminal (real API calls, costs money; add `brief` for cheaper replies):
+Terminal client for quick prompt experiments (real API calls, costs money; add `brief` for cheaper replies;
+conversations are not saved):
 ```bash
 python try_mx.py
 ```

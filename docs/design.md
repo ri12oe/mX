@@ -41,7 +41,7 @@ Out of scope (later phases): backup provider adapter, tools/function calling (in
        v         v
    +---------------------+
    |   mX API            |  FastAPI
-   |  - auth (API key)   |
+   |  - auth (key/login) |
    |  - /chat (SSE)      |
    |  - prompt loader    |
    |  - logging / cost   |
@@ -57,10 +57,12 @@ Out of scope (later phases): backup provider adapter, tools/function calling (in
 ```
 
 Module layout:
-- `api/main.py` — app setup, `/health`, `/whoami`
+- `api/main.py` — app setup, security headers, `/health`, `/whoami`, serving the built web app
+- `api/auth.py` — `POST /auth/login`, `POST /auth/logout`, session tokens, login lockout
 - `api/deps.py` — dependencies (`require_key`, `get_db`, `get_provider`)
 - `api/chat.py` — `POST /chat`
 - `api/conversations.py` — `GET /conversations`, `GET` and `DELETE /conversations/{id}`
+- `api/images.py` — image decoding/validation and `GET /images/{id}`
 - `api/config.py` — settings (§10)
 - `api/db.py` + `api/schema.sql` — SQLite access (§7)
 - `api/prompts.py` — prompt loader (§8)
@@ -78,7 +80,7 @@ All routes except `/health` and `/auth/*` require **either** the `X-mX-Key` head
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Liveness check (public) |
-| GET | `/whoami` | Auth check; temporary, removed once the web UI uses `/chat` |
+| GET | `/whoami` | Auth check; the web app uses it to tell whether it's signed in |
 | POST | `/chat` | Send a message; streams the reply (SSE) |
 | GET | `/conversations` | List conversations, newest `updated_at` first, `?limit=50` |
 | GET | `/conversations/{id}` | Conversation + its messages, oldest first; 404 if unknown |
@@ -184,14 +186,14 @@ For a model missing from the table, `cost_usd` is NULL and a warning is logged.
 
 ## 10. Config, security, and logging
 Settings (`api/config.py`, loaded from `.env`):
-`MX_API_KEY`, `ANTHROPIC_API_KEY`, `PRIMARY_PROVIDER`, `PRIMARY_MODEL`, `DB_PATH`, `SYSTEM_PROMPT_FILE`, `CORS_ORIGINS`.
+`MX_API_KEY`, `MX_PASSWORD`, `ANTHROPIC_API_KEY`, `PRIMARY_PROVIDER`, `PRIMARY_MODEL`, `DB_PATH`, `SYSTEM_PROMPT_FILE`, `WEB_DIST` (built web app, default `web/dist`), `COOKIE_SECURE` (default true), `CORS_ORIGINS`.
 `OPENAI_API_KEY` and `DATABASE_URL` are removed.
 
 - **Auth:** the key is compared with `hmac.compare_digest` (constant-time). The app **refuses to start** if `MX_API_KEY` is empty, starts with `change-me`, or is shorter than 32 characters.
 - **Web login (Week 5):** `MX_PASSWORD` (≥ 12 chars, required) → `POST /auth/login` sets `mx_session`, an **HttpOnly, Secure, SameSite=Strict** cookie valid 30 days. The token is `<expiry>.<HMAC-SHA256(MX_API_KEY, expiry)>`: stateless, and changing `MX_API_KEY` signs every device out. 5 wrong passwords in 15 min lock logins for 15 min (in memory; the key still works). No key or password is stored in the browser.
 - **Same origin:** in production the API serves the built web app at `/` (`WEB_DIST`); in development Vite proxies API paths to uvicorn. CORS is only for other origins.
 - **Security headers** on every response: a strict `Content-Security-Policy` (scripts only from the site; `unsafe-inline` styles for KaTeX; skipped on `/docs` and `/redoc`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
-- **CORS:** `CORS_ORIGINS` defaults to `["http://localhost:5173"]` (the Vite dev server). The `X-mX-Key` and `Content-Type` headers are allowed.
+- **CORS:** `CORS_ORIGINS` defaults to `["http://localhost:5173"]`. **Currently unused:** the app is same-origin in production and Vite proxies API calls in development. Kept for a future client on another origin; credentials are not allowed cross-origin.
 - **Logging:** stdlib `logging`, one line per chat turn with conversation ID, model, tokens, cost, latency and status. **Never** log message content, images, or keys.
 
 ## 11. Testing
@@ -209,7 +211,7 @@ Settings (`api/config.py`, loaded from `.env`):
 Decided 2026-09-30:
 - [x] **Provider:** Anthropic Claude API only for Phase 1. Backup provider deferred to a later phase (see §3).
 - [x] **Name and tone:** mX. Formal, teacher-like broad expert (see §8).
-- [x] **Web UI stack:** React + Vite, chosen so Rio can learn React. Needs Node.js, and CORS on the API (§10). **TypeScript** (decided 2026-09-30, Week 4): matches the typed Python side and catches mistakes while learning. Replies render markdown, code highlighting, and KaTeX math; the API key is stored in the browser's localStorage (acceptable for a personal local app; revisit before deploy). See `web/README.md`.
+- [x] **Web UI stack:** React + Vite, chosen so Rio can learn React. Needs Node.js, and CORS on the API (§10). **TypeScript** (decided 2026-09-30, Week 4): matches the typed Python side and catches mistakes while learning. Replies render markdown, code highlighting, and KaTeX math. Sign-in is a password + HttpOnly session cookie (Week 5, below); nothing sensitive is stored in the browser. See `web/README.md`.
 - [x] **Deploy host: Fly.io** (decided 2026-09-30, Week 5, after a researcher comparison of Fly.io, Railway, Render, and a VPS): about $2/month with a 1 GB volume, HTTPS on `*.fly.dev`, and no total streaming cap as long as bytes flow (hence heartbeats). One machine only (SQLite). Guide: `docs/deploy.md`.
 - [x] **Web login: password + HttpOnly session cookie** (decided 2026-09-30, Week 5), replacing the API key in localStorage (§10).
 - [x] **Run locally only; don't publish** (decided 2026-09-30, Week 5). mX runs on Rio's laptop via `start-mx.ps1`: uvicorn on `127.0.0.1:8000` serving the built web app, so only this computer can reach it. No hosting cost. The Dockerfile, `fly.toml`, and `docs/deploy.md` stay in the repo in case this changes. For phone access later, use a private network such as Tailscale rather than exposing the server; plain HTTP on the LAN would send the password unencrypted, and the Secure cookie wouldn't work.

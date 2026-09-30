@@ -37,4 +37,4 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 - [x] Test coverage pass → Python 99% (branch), web 97% lines; see PR
 - [x] Dockerfile (DB on a `/data` volume), fly.toml, web login, heartbeats, security headers → `docs/deploy.md`
 - [x] ~~Deploy to Fly.io~~ **Not planned:** Phase 1 runs locally only (decided 2026-09-30). `start-mx.ps1` starts it; `docs/deploy.md` is kept if that changes.
-- [ ] Phase 1 review
+- [x] Phase 1 review → `docs/phase1-review.md` (no critical issues; 1 high bug fixed)
