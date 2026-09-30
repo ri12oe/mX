@@ -27,7 +27,7 @@ In scope:
 - Conversation storage (SQLite)
 - Web chat UI (React + Vite)
 - Eval set + runner, token/cost logging
-- Docker + deploy
+- Docker + deploy → **changed in Week 5:** mX runs locally only; the Docker/Fly setup is kept but not deployed (§13)
 
 Out of scope (later phases): backup provider adapter, tools/function calling (incl. code execution, web search), long-term memory, voice, wake word, context awareness, fine-tuning, glasses client, multi-user accounts, LLM-judged evals.
 
@@ -212,6 +212,7 @@ Decided 2026-09-30:
 - [x] **Web UI stack:** React + Vite, chosen so Rio can learn React. Needs Node.js, and CORS on the API (§10). **TypeScript** (decided 2026-09-30, Week 4): matches the typed Python side and catches mistakes while learning. Replies render markdown, code highlighting, and KaTeX math; the API key is stored in the browser's localStorage (acceptable for a personal local app; revisit before deploy). See `web/README.md`.
 - [x] **Deploy host: Fly.io** (decided 2026-09-30, Week 5, after a researcher comparison of Fly.io, Railway, Render, and a VPS): about $2/month with a 1 GB volume, HTTPS on `*.fly.dev`, and no total streaming cap as long as bytes flow (hence heartbeats). One machine only (SQLite). Guide: `docs/deploy.md`.
 - [x] **Web login: password + HttpOnly session cookie** (decided 2026-09-30, Week 5), replacing the API key in localStorage (§10).
+- [x] **Run locally only; don't publish** (decided 2026-09-30, Week 5). mX runs on Rio's laptop via `start-mx.ps1`: uvicorn on `127.0.0.1:8000` serving the built web app, so only this computer can reach it. No hosting cost. The Dockerfile, `fly.toml`, and `docs/deploy.md` stay in the repo in case this changes. For phone access later, use a private network such as Tailscale rather than exposing the server; plain HTTP on the LAN would send the password unencrypted, and the Secure cookie wouldn't work.
 - [x] **Images:** stored as BLOBs in SQLite (§7).
 - [x] **Failed/aborted turns:** save nothing (§5).
 - [x] **History window:** last 20 messages; older images omitted (§6).

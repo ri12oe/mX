@@ -3,7 +3,21 @@
 A personal AI assistant with its own backend, built on hosted model APIs.
 Phase 1: brain, personality, and API layer. See `docs/design.md`.
 
-## Quick start
+## Run mX
+Double-click **`start-mx.cmd`**, or run `.\start-mx.ps1` in PowerShell. It:
+1. checks your venv and `.env` (you need `MX_API_KEY`, `MX_PASSWORD`, and `ANTHROPIC_API_KEY`);
+2. installs web dependencies the first time, and rebuilds the web app only when its files changed;
+3. starts mX on http://localhost:8000 and opens it in your browser. Sign in with `MX_PASSWORD`.
+
+Only this computer can reach it (`127.0.0.1`). Press **Ctrl+C** in the window to stop mX.
+If it's already running, the script just opens the browser.
+
+**Back up your chats.** They live in `data/mx.db`, which isn't in git. Copy that file somewhere safe now and then
+(stop mX first, or copy `mx.db`, `mx.db-wal`, and `mx.db-shm` together).
+
+mX isn't published online. `Dockerfile`, `fly.toml`, and `docs/deploy.md` are kept in case that changes.
+
+## Development setup
 ```bash
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
