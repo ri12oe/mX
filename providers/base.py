@@ -18,9 +18,10 @@ class Message:
 @dataclass
 class ModelResponse:
     text: str
-    model: str
+    model: str  # the model that actually answered (may differ after a fallback)
     input_tokens: int
     output_tokens: int
+    stop_reason: str = "end_turn"  # "max_tokens" means the reply was cut off
 
 
 @runtime_checkable
