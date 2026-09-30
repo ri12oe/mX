@@ -7,7 +7,7 @@ Phase 1: brain, personality, and API layer. See `docs/design.md`.
 ```bash
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .env.example .env             # then edit .env
 pytest -q
 uvicorn api.main:app --reload

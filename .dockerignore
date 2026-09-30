@@ -1,0 +1,23 @@
+# Keep secrets, local data, and build junk out of the image.
+.env
+.env.*
+!.env.example
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+data
+*.db
+*.db-wal
+*.db-shm
+evals
+tests
+docs
+.claude
+web/node_modules
+web/dist
+web/coverage
+try_mx.py

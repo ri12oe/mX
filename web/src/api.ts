@@ -1,13 +1,8 @@
-// Client for the mX API. Every call sends the X-mX-Key header.
+// Client for the mX API. The web app is served from the same origin as the API
+// (in development, Vite proxies the API paths), so requests carry the HttpOnly
+// session cookie automatically; no key is ever stored in the browser.
 import { SSEParser } from "./sse";
 import type { ChatEvent, ChatRequest, ConversationDetail, ConversationSummary } from "./types";
-
-export interface ApiConfig {
-  baseUrl: string;
-  apiKey: string;
-}
-
-export const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
 
 /** An HTTP error from the API, with its machine-readable code when there is one. */
 export class ApiError extends Error {
@@ -21,23 +16,25 @@ export class ApiError extends Error {
   }
 }
 
-function url(config: ApiConfig, path: string): string {
-  return config.baseUrl.replace(/\/+$/, "") + path;
-}
-
-async function request(config: ApiConfig, path: string, init: RequestInit = {}): Promise<Response> {
+async function request(path: string, init: RequestInit = {}): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(url(config, path), {
-      ...init,
-      headers: { "X-mX-Key": config.apiKey, ...init.headers },
-    });
+    response = await fetch(path, { credentials: "same-origin", ...init });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw err;
-    throw new ApiError(0, "network", `Can't reach the mX API at ${config.baseUrl}. Is the server running?`);
+    throw new ApiError(0, "network", "Can't reach mX. Check your connection or that the server is running.");
   }
   if (!response.ok) throw await toApiError(response);
   return response;
+}
+
+function postJson(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+  return request(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
 }
 
 /** FastAPI errors look like {detail: "text"} or {detail: {code, message}} or {detail: [validation...]}. */
@@ -59,45 +56,46 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, `http_${response.status}`, `Request failed (${response.status}).`);
 }
 
-export async function checkConnection(config: ApiConfig): Promise<{ model: string }> {
-  return (await request(config, "/whoami")).json();
+export const isSignedOut = (err: unknown): boolean => err instanceof ApiError && err.status === 401;
+
+/** Resolves if the session cookie is valid; throws ApiError(401) if not. */
+export async function whoami(): Promise<{ model: string }> {
+  return (await request("/whoami")).json();
 }
 
-export async function listConversations(config: ApiConfig): Promise<ConversationSummary[]> {
-  return (await request(config, "/conversations?limit=100")).json();
+export async function login(password: string): Promise<void> {
+  await postJson("/auth/login", { password });
 }
 
-export async function getConversation(config: ApiConfig, id: string): Promise<ConversationDetail> {
-  return (await request(config, `/conversations/${encodeURIComponent(id)}`)).json();
+export async function logout(): Promise<void> {
+  await request("/auth/logout", { method: "POST" });
 }
 
-export async function deleteConversation(config: ApiConfig, id: string): Promise<void> {
-  await request(config, `/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+export async function listConversations(): Promise<ConversationSummary[]> {
+  return (await request("/conversations?limit=100")).json();
 }
 
-/** Stored images need the key header, so they're fetched and shown as object URLs. */
-export async function fetchImageUrl(config: ApiConfig, id: string): Promise<string> {
-  const blob = await (await request(config, `/images/${encodeURIComponent(id)}`)).blob();
-  return URL.createObjectURL(blob);
+export async function getConversation(id: string): Promise<ConversationDetail> {
+  return (await request(`/conversations/${encodeURIComponent(id)}`)).json();
 }
+
+export async function deleteConversation(id: string): Promise<void> {
+  await request(`/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export const imageUrl = (id: string): string => `/images/${encodeURIComponent(id)}`;
 
 /**
  * POST /chat and call onEvent for each streamed event (meta, delta..., done | error).
  * Throws ApiError for failures before streaming starts. Abort via `signal`:
- * the server then saves nothing (design.md §5).
+ * the server then saves nothing (design.md §5). ": ping" heartbeats are skipped.
  */
 export async function streamChat(
-  config: ApiConfig,
   body: ChatRequest,
   onEvent: (event: ChatEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await request(config, "/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
-  });
+  const response = await postJson("/chat", body, signal);
   if (!response.body) throw new ApiError(0, "no_stream", "The server returned no stream.");
 
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();

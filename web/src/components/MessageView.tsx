@@ -1,9 +1,8 @@
-import type { ApiConfig } from "../api";
 import type { UiMessage, Usage } from "../types";
-import { AuthImage } from "./AuthImage";
 import { Markdown } from "./Markdown";
+import { StoredImage } from "./StoredImage";
 
-export function MessageView({ message, config }: { message: UiMessage; config: ApiConfig }) {
+export function MessageView({ message }: { message: UiMessage }) {
   const hasImages = message.images.length > 0 || message.imageRefs.length > 0;
   const images = hasImages && (
     <div className="thumbs">
@@ -11,7 +10,7 @@ export function MessageView({ message, config }: { message: UiMessage; config: A
         <img key={i} className="thumb" src={src} alt={`Attached image ${i + 1}`} />
       ))}
       {message.imageRefs.map((id) => (
-        <AuthImage key={id} config={config} id={id} />
+        <StoredImage key={id} id={id} />
       ))}
     </div>
   );

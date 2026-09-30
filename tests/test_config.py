@@ -52,3 +52,15 @@ def test_error_does_not_echo_the_key():
     with pytest.raises(ValidationError) as exc:
         make_settings(secret)
     assert secret not in str(exc.value)
+
+
+@pytest.mark.parametrize("bad_password", ["", "short", "change-me-please-now"])
+def test_weak_password_refuses_to_start(bad_password: str):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, mx_api_key=STRONG_KEY, mx_password=bad_password)
+
+
+def test_password_error_does_not_echo_it():
+    with pytest.raises(ValidationError) as exc:
+        Settings(_env_file=None, mx_api_key=STRONG_KEY, mx_password="tiny-secret")
+    assert "tiny-secret" not in str(exc.value)

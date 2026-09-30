@@ -4,9 +4,10 @@ import sqlite3
 from collections.abc import Iterator
 from functools import lru_cache
 
-from fastapi import Header, HTTPException
+from fastapi import Cookie, Header, HTTPException
 
 from api import db
+from api.auth import session_is_valid
 from api.config import settings
 from providers import ModelProvider, create_provider
 
@@ -37,10 +38,17 @@ def get_provider() -> ModelProvider:
     )
 
 
-def require_key(x_mx_key: str = Header(default="")) -> None:
-    """Every protected route requires the X-mX-Key header.
+def require_auth(
+    x_mx_key: str = Header(default=""),
+    mx_session: str = Cookie(default=""),
+) -> None:
+    """Every protected route needs the X-mX-Key header (scripts) or a valid
+    session cookie (the web app, after POST /auth/login).
 
     Uses a constant-time compare so response timing doesn't leak the key.
     """
-    if not hmac.compare_digest(x_mx_key.encode(), settings.mx_api_key.encode()):
-        raise HTTPException(status_code=401, detail="Invalid or missing X-mX-Key")
+    if x_mx_key and hmac.compare_digest(x_mx_key.encode(), settings.mx_api_key.encode()):
+        return
+    if mx_session and session_is_valid(mx_session):
+        return
+    raise HTTPException(status_code=401, detail="Not signed in (missing or invalid X-mX-Key or session)")
