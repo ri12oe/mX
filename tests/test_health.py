@@ -17,6 +17,6 @@ def test_whoami_requires_key():
 
 
 def test_whoami_with_key():
-    r = client.get("/whoami", headers={"X-Jarvis-Key": settings.jarvis_api_key})
+    r = client.get("/whoami", headers={"X-mX-Key": settings.mx_api_key})
     assert r.status_code == 200
-    assert r.json()["assistant"] == "Jarvis"
+    assert r.json()["assistant"] == "mX"

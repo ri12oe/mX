@@ -1,4 +1,4 @@
-# Jarvis — instructions for AI coding agents
+# mX — instructions for AI coding agents
 
 Read these before doing anything:
 1. `docs/design.md` — the architecture and scope. It is the source of truth.

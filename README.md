@@ -1,4 +1,4 @@
-# Jarvis
+# mX
 
 A personal AI assistant with its own backend, built on hosted model APIs.
 Phase 1: brain, personality, and API layer. See `docs/design.md`.
@@ -15,7 +15,7 @@ uvicorn api.main:app --reload
 Open http://127.0.0.1:8000/docs and try `/health`.
 Test auth:
 ```bash
-curl -H "X-Jarvis-Key: <your key>" http://127.0.0.1:8000/whoami
+curl -H "X-mX-Key: <your key>" http://127.0.0.1:8000/whoami
 ```
 
 ## Layout
