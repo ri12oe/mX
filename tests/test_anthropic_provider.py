@@ -1,5 +1,6 @@
 """AnthropicProvider.generate with the SDK mocked (no network, no cost)."""
 import asyncio
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,7 +17,7 @@ from providers.anthropic_provider import (
     AnthropicProvider,
     map_error,
 )
-from providers.base import Message
+from providers.base import Message, ModelResponse
 from providers.errors import (
     ProviderAuthError,
     ProviderBadRequestError,
@@ -53,8 +54,9 @@ def make_message(
 class FakeMessages:
     """Stands in for client.beta.messages: records kwargs, returns or raises."""
 
-    def __init__(self, result: BetaMessage | Exception) -> None:
+    def __init__(self, result: BetaMessage | Exception, stream: "FakeStream | None" = None) -> None:
         self.result = result
+        self.fake_stream = stream
         self.kwargs: dict[str, Any] = {}
 
     async def create(self, **kwargs: Any) -> BetaMessage:
@@ -63,11 +65,63 @@ class FakeMessages:
             raise self.result
         return self.result
 
+    def stream(self, **kwargs: Any) -> "FakeStream":
+        self.kwargs = kwargs
+        assert self.fake_stream is not None
+        return self.fake_stream
 
-def provider_with(result: BetaMessage | Exception) -> tuple[AnthropicProvider, FakeMessages]:
-    messages = FakeMessages(result)
+
+class FakeStream:
+    """Stands in for the SDK's async stream manager + stream.
+
+    Yields `chunks` from text_stream, optionally raising `error` when opened
+    (`fail_after=None`) or after `fail_after` chunks.
+    """
+
+    def __init__(
+        self,
+        chunks: list[str],
+        final: BetaMessage,
+        error: Exception | None = None,
+        fail_after: int | None = None,
+    ) -> None:
+        self.chunks, self.final, self.error, self.fail_after = chunks, final, error, fail_after
+        self.closed = False
+        self.text_stream = self._text()
+
+    async def __aenter__(self) -> "FakeStream":
+        if self.error is not None and self.fail_after is None:
+            raise self.error
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        self.closed = True
+        return False
+
+    async def _text(self) -> AsyncIterator[str]:
+        for i, chunk in enumerate(self.chunks):
+            if self.error is not None and i == self.fail_after:
+                raise self.error
+            yield chunk
+
+    async def get_final_message(self) -> BetaMessage:
+        return self.final
+
+
+def provider_with(
+    result: BetaMessage | Exception, stream: FakeStream | None = None
+) -> tuple[AnthropicProvider, FakeMessages]:
+    messages = FakeMessages(result, stream)
     client = SimpleNamespace(beta=SimpleNamespace(messages=messages))
     return AnthropicProvider(api_key="unused", model=MODEL, client=client), messages
+
+
+def streaming_provider(fake_stream: FakeStream) -> tuple[AnthropicProvider, FakeMessages]:
+    return provider_with(make_message(), fake_stream)
+
+
+async def collect(stream: AsyncIterator[str | ModelResponse]) -> list[str | ModelResponse]:
+    return [item async for item in stream]
 
 
 def status_error(status: int, message: str = "boom") -> anthropic.APIStatusError:
@@ -239,3 +293,103 @@ def test_generate_raises_mapped_error_and_keeps_the_cause():
         asyncio.run(provider.generate(HISTORY, "sys"))
     assert exc.value.__cause__ is sdk_error
     assert "429" in str(exc.value)
+
+
+# --- stream() --------------------------------------------------------------
+
+
+def test_stream_yields_chunks_then_final_response():
+    final = make_message([{"type": "text", "text": "Hello, Rio."}])
+    provider, _ = streaming_provider(FakeStream(["Hello", ", ", "Rio."], final))
+    items = asyncio.run(collect(provider.stream(HISTORY, "sys")))
+
+    assert items[:-1] == ["Hello", ", ", "Rio."]
+    last = items[-1]
+    assert isinstance(last, ModelResponse)
+    assert (last.text, last.model, last.input_tokens, last.output_tokens) == ("Hello, Rio.", MODEL, 30, 4)
+
+
+def test_stream_sends_the_same_request_as_generate():
+    provider, fake = streaming_provider(FakeStream(["ok"], make_message()))
+    asyncio.run(collect(provider.stream(HISTORY, "You are mX.", max_tokens=2048, effort="low")))
+
+    assert fake.kwargs["model"] == MODEL
+    assert fake.kwargs["system"] == "You are mX."
+    assert fake.kwargs["max_tokens"] == 2048
+    assert fake.kwargs["output_config"] == {"effort": "low"}
+    assert (fake.kwargs["betas"], fake.kwargs["fallbacks"]) == ([FALLBACK_BETA], "default")
+    assert len(fake.kwargs["messages"]) == 3
+
+
+def test_stream_error_before_any_text_is_mapped():
+    provider, _ = streaming_provider(FakeStream(["never"], make_message(), error=status_error(529)))
+    with pytest.raises(ProviderUnavailableError):
+        asyncio.run(collect(provider.stream(HISTORY, "sys")))
+
+
+def test_stream_error_mid_reply_is_mapped_after_partial_text():
+    fake_stream = FakeStream(
+        ["a", "b", "c"], make_message(),
+        error=anthropic.APIConnectionError(request=REQUEST), fail_after=2,
+    )
+    provider, _ = streaming_provider(fake_stream)
+    received: list[str | ModelResponse] = []
+
+    async def consume() -> None:
+        async for item in provider.stream(HISTORY, "sys"):
+            received.append(item)
+
+    with pytest.raises(ProviderUnavailableError):
+        asyncio.run(consume())
+    assert received == ["a", "b"]  # partial text, no final response
+
+
+def test_stream_unrescued_refusal_raises_after_partial_text():
+    refusal = make_message(
+        content=[{"type": "text", "text": "Sure, here"}], stop_reason="refusal",
+        stop_details={"type": "refusal", "category": "bio", "explanation": None},
+    )
+    provider, _ = streaming_provider(FakeStream(["Sure, ", "here"], refusal))
+    received: list[str | ModelResponse] = []
+
+    async def consume() -> None:
+        async for item in provider.stream(HISTORY, "sys"):
+            received.append(item)
+
+    with pytest.raises(ProviderRefusalError) as exc:
+        asyncio.run(consume())
+    assert received == ["Sure, ", "here"]  # caller must discard this partial
+    assert exc.value.category == "bio"
+
+
+def test_stream_mid_reply_fallback_continues_on_same_stream():
+    """A rescued refusal: text from both models arrives; the final names the fallback."""
+    final = make_message(
+        [{"type": "text", "text": "Part one. "}, {"type": "text", "text": "Part two."}],
+        model="claude-opus-5",
+    )
+    provider, _ = streaming_provider(FakeStream(["Part one. ", "Part two."], final))
+    items = asyncio.run(collect(provider.stream(HISTORY, "sys")))
+    last = items[-1]
+    assert isinstance(last, ModelResponse)
+    assert (last.text, last.model) == ("Part one. Part two.", "claude-opus-5")
+
+
+def test_stream_closes_http_stream_when_caller_stops_early():
+    """E.g. the browser disconnects: stop generating (and paying) right away."""
+    fake_stream = FakeStream(["a", "b", "c"], make_message())
+    provider, _ = streaming_provider(fake_stream)
+
+    async def read_one_then_stop() -> None:
+        gen = provider.stream(HISTORY, "sys")
+        assert await gen.__anext__() == "a"
+        await gen.aclose()
+
+    asyncio.run(read_one_then_stop())
+    assert fake_stream.closed
+
+
+def test_stream_rejects_unknown_options():
+    provider, _ = streaming_provider(FakeStream(["x"], make_message()))
+    with pytest.raises(TypeError):
+        asyncio.run(collect(provider.stream(HISTORY, "sys", temperature=0.2)))

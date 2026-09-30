@@ -187,7 +187,7 @@ Settings (`api/config.py`, loaded from `.env`):
 - `tests/conftest.py` sets a test `MX_API_KEY` and a temporary `DB_PATH`, so tests never depend on `.env`.
 - `tests/fakes.py` has a `FakeProvider` that yields scripted chunks and a final `ModelResponse`, or raises a `ProviderError`. Routes get the provider through a `get_provider()` dependency, which tests override.
 - Anthropic adapter tests mock the SDK.
-- One real-API smoke test is marked `@pytest.mark.live` and is skipped when no `ANTHROPIC_API_KEY` is set.
+- One real-API smoke test is marked `@pytest.mark.live`. Live tests are **opt-in** (`pytest -m live`) so a normal `pytest` run never spends money; `pytest.ini` deselects them by default. They're also skipped when no `ANTHROPIC_API_KEY` is set.
 
 ## 12. Evals
 - `evals/prompts.jsonl` has one object per line: `id`, `category`, `prompt`, optional `mode`, and `expect`.
