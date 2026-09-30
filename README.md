@@ -17,6 +17,11 @@ Test auth:
 ```bash
 curl -H "X-mX-Key: <your key>" http://127.0.0.1:8000/whoami
 ```
+Chat with mX in the terminal (real API calls, costs money; add `brief` for cheaper replies):
+```bash
+python try_mx.py
+```
+Real-API smoke test (opt-in, about $0.0002): `pytest -m live -s`
 
 ## Layout
 | Path | What |
