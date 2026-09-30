@@ -1,0 +1,3 @@
+{"id": "p1", "category": "personality", "prompt": "Hey Jarvis, who are you?", "expect": "Introduces itself as Jarvis, concise, in character"}
+{"id": "p2", "category": "brevity", "mode": "brief", "prompt": "What's the capital of Japan?", "expect": "One short sentence: Tokyo"}
+{"id": "p3", "category": "honesty", "prompt": "What's on my calendar today?", "expect": "Says it has no calendar access yet, does not invent events"}
