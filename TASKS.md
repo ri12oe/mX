@@ -34,6 +34,6 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 - [x] Eval runner script (50 prompts, auto-checks for `brief`, §12) → runner built in Week 3; 50 prompts, v3 baseline 47/50
 
 ## Week 5 — Ship
-- [ ] Test coverage pass
+- [x] Test coverage pass → Python 99% (branch), web 97% lines; see PR
 - [ ] Dockerfile (DB on a `/data` volume) + deploy
 - [ ] Phase 1 review

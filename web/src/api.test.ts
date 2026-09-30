@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, deleteConversation, listConversations, streamChat, type ApiConfig } from "./api";
+import {
+  ApiError,
+  checkConnection,
+  deleteConversation,
+  fetchImageUrl,
+  getConversation,
+  listConversations,
+  streamChat,
+  type ApiConfig,
+} from "./api";
 import type { ChatEvent } from "./types";
 
 const config: ApiConfig = { baseUrl: "http://api.test/", apiKey: "secret-key" };
@@ -89,5 +98,33 @@ describe("request errors", () => {
     const fetch = mockFetch(new Response(null, { status: 204 }));
     await deleteConversation(config, "a/b");
     expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe("http://api.test/conversations/a%2Fb");
+  });
+});
+
+describe("other calls", () => {
+  it("checkConnection calls /whoami, getConversation reads JSON", async () => {
+    const fetch = mockFetch(new Response(JSON.stringify({ model: "claude-opus-5-5" })));
+    expect(await checkConnection(config)).toEqual({ model: "claude-opus-5-5" });
+    expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe("http://api.test/whoami");
+
+    mockFetch(new Response(JSON.stringify({ id: "c1", messages: [] })));
+    expect((await getConversation(config, "c1")).id).toBe("c1");
+  });
+
+  it("fetchImageUrl turns the bytes into an object URL", async () => {
+    mockFetch(new Response(new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" })));
+    const url = await fetchImageUrl(config, "img1");
+    expect(url).toMatch(/^blob:/);
+    URL.revokeObjectURL(url);
+  });
+
+  it("gives a generic message when the error body isn't JSON", async () => {
+    mockFetch(new Response("<html>Bad gateway</html>", { status: 502 }));
+    await expect(listConversations(config)).rejects.toMatchObject({ status: 502, code: "http_502", message: "Request failed (502)." });
+  });
+
+  it("errors clearly when a chat response has no body", async () => {
+    mockFetch(new Response(null, { status: 200 }));
+    await expect(streamChat(config, { message: "hi", mode: "normal" }, () => {})).rejects.toMatchObject({ code: "no_stream" });
   });
 });

@@ -410,3 +410,13 @@ def test_stream_rejects_unknown_options():
     provider, _ = streaming_provider(FakeStream(["x"], make_message()))
     with pytest.raises(TypeError):
         asyncio.run(collect(provider.stream(HISTORY, "sys", temperature=0.2)))
+
+
+def test_non_http_sdk_errors_map_to_the_base_error():
+    error = map_error(anthropic.APIError("weird", request=REQUEST, body=None))
+    assert type(error) is ProviderError
+    assert "weird" in str(error)
+
+
+def test_unexpected_status_maps_to_the_base_error():
+    assert type(map_error(status_error(302))) is ProviderError

@@ -1,0 +1,10 @@
+# Coverage settings for `pytest --cov`.
+[run]
+source = api, providers, evals
+branch = true
+
+[report]
+show_missing = true
+skip_covered = true
+exclude_also =
+    if __name__ == .__main__.:

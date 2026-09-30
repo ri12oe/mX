@@ -68,7 +68,10 @@ def load_cases(path: Path = PROMPTS_FILE, ids: set[str] | None = None) -> list[E
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
-        raw = json.loads(line)
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path.name} line {line_number}: invalid JSON ({exc.msg})") from None
         case = EvalCase(
             id=raw["id"], category=raw["category"], prompt=raw["prompt"], expect=raw["expect"],
             mode=raw.get("mode", "normal"),
