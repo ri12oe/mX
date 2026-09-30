@@ -7,12 +7,14 @@ import hmac
 import sqlite3
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from functools import lru_cache
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from api import db
 from api.config import settings
+from providers import ModelProvider, create_provider
 
 
 @asynccontextmanager
@@ -43,6 +45,20 @@ def get_db() -> Iterator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
+
+
+@lru_cache
+def get_provider() -> ModelProvider:
+    """The configured model provider, built once and shared (reuses the SDK client).
+
+    Routes use only this, never an SDK. Tests swap in a fake with
+    app.dependency_overrides[get_provider].
+    """
+    return create_provider(
+        settings.primary_provider,
+        api_key=settings.anthropic_api_key,
+        model=settings.primary_model,
+    )
 
 
 def require_key(x_mx_key: str = Header(default="")) -> None:
