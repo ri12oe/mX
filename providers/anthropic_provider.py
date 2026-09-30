@@ -61,28 +61,60 @@ class AnthropicProvider:
         `effort` controls how hard the model thinks (and how many tokens it
         spends). None uses the model's default.
         """
-        _reject_unknown_opts(opts)
-        extra: dict[str, Any] = {}
-        if effort is not None:
-            extra["output_config"] = {"effort": _checked_effort(effort)}
+        params = self._params(messages, system, max_tokens, effort, opts)
         try:
-            response = await self._client.beta.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=[to_message_param(m) for m in messages],
-                betas=[FALLBACK_BETA],
-                fallbacks="default",
-                **extra,
-            )
+            response = await self._client.beta.messages.create(**params)
         except anthropic.APIError as exc:
             raise map_error(exc) from exc
         return to_model_response(response)
 
-    def stream(
-        self, messages: list[Message], system: str, **opts: Any
+    async def stream(
+        self,
+        messages: list[Message],
+        system: str,
+        *,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        effort: str | None = None,
+        **opts: Any,
     ) -> AsyncIterator[str | ModelResponse]:
-        raise NotImplementedError("Streaming arrives in Week 2, task 6.")
+        """Yield text chunks as they arrive, then one final ModelResponse.
+
+        If a refusal is rescued mid-stream, the fallback model continues on the
+        same stream. An unrescued refusal raises ProviderRefusalError after the
+        partial text; callers must discard it. If the caller stops iterating
+        (e.g. the browser disconnects), the HTTP stream is closed.
+        """
+        params = self._params(messages, system, max_tokens, effort, opts)
+        try:
+            async with self._client.beta.messages.stream(**params) as stream:
+                async for text in stream.text_stream:
+                    yield text
+                final = await stream.get_final_message()
+        except anthropic.APIError as exc:
+            raise map_error(exc) from exc
+        yield to_model_response(final)
+
+    def _params(
+        self,
+        messages: list[Message],
+        system: str,
+        max_tokens: int,
+        effort: str | None,
+        opts: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Request body shared by generate() and stream()."""
+        _reject_unknown_opts(opts)
+        params: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": [to_message_param(m) for m in messages],
+            "betas": [FALLBACK_BETA],
+            "fallbacks": "default",
+        }
+        if effort is not None:
+            params["output_config"] = {"effort": _checked_effort(effort)}
+        return params
 
 
 # --- Conversions -----------------------------------------------------------
