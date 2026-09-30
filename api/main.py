@@ -6,10 +6,19 @@ Docs: http://127.0.0.1:8000/docs
 import hmac
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import settings
 
 app = FastAPI(title="mX API", version="0.1.0")
+
+# Lets the React dev server (a different origin) call the API from the browser.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["X-mX-Key", "Content-Type"],
+)
 
 
 def require_key(x_mx_key: str = Header(default="")) -> None:
@@ -34,5 +43,5 @@ def whoami() -> dict:
         "assistant": "mX",
         "provider": settings.primary_provider,
         "model": settings.primary_model,
-        "provider_key_set": bool(settings.anthropic_api_key or settings.openai_api_key),
+        "provider_key_set": bool(settings.anthropic_api_key),
     }
