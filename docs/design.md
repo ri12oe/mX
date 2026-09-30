@@ -60,6 +60,7 @@ Module layout:
 - `api/main.py` — app setup, `/health`, `/whoami`
 - `api/deps.py` — dependencies (`require_key`, `get_db`, `get_provider`)
 - `api/chat.py` — `POST /chat`
+- `api/conversations.py` — `GET /conversations`, `GET` and `DELETE /conversations/{id}`
 - `api/config.py` — settings (§10)
 - `api/db.py` + `api/schema.sql` — SQLite access (§7)
 - `api/prompts.py` — prompt loader (§8)
