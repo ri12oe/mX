@@ -6,12 +6,12 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    jarvis_api_key: str = "change-me"
+    mx_api_key: str = "change-me"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     primary_provider: str = "anthropic"
     primary_model: str = "claude-sonnet-5-5"
-    database_url: str = "sqlite:///./jarvis.db"
+    database_url: str = "sqlite:///./mx.db"
 
 
 settings = Settings()

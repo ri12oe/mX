@@ -1,14 +1,14 @@
-# Jarvis — Design Doc (v0.1, Phase 1)
+# mX — Design Doc (v0.1, Phase 1)
 
 Owner: Rio · Status: Draft · Last updated: 2026-09-30
 
 ## 1. Goal
-A personal AI assistant ("Jarvis") that Rio can chat with through his **own backend**,
+A personal AI assistant ("mX") that Rio can chat with through his **own backend**,
 built on hosted model APIs. Phase 1 delivers the brain, personality, and API layer.
 Later phases add tools, memory, voice, context awareness, and AR-glasses clients.
 
 ## 2. Principles
-1. **Backend-first.** Every client (web, phone, voice, glasses) talks to the Jarvis API, never to a model provider directly.
+1. **Backend-first.** Every client (web, phone, voice, glasses) talks to the mX API, never to a model provider directly.
 2. **Provider-agnostic.** Model calls go through one interface; providers are swappable adapters.
 3. **Prompts are data.** Personality and system prompts live in versioned files under `prompts/`.
 4. **Measure everything.** Every change is checked against the eval set in `evals/`.
@@ -34,7 +34,7 @@ Out of scope (later phases): tools/function calling, long-term memory, voice, wa
       \          |
        v         v
    +---------------------+
-   |   Jarvis API        |  FastAPI
+   |   mX API        |  FastAPI
    |  - auth (API key)   |
    |  - /chat (SSE)      |
    |  - prompt loader    |
@@ -68,7 +68,7 @@ Out of scope (later phases): tools/function calling, long-term memory, voice, wa
   "mode": "normal"
 }
 ```
-All requests require header `X-Jarvis-Key`.
+All requests require header `X-mX-Key`.
 
 ## 6. Provider interface
 ```python
@@ -85,7 +85,7 @@ class ModelProvider(Protocol):
 - `usage(id, message_id, provider, model, input_tokens, output_tokens, cost_usd, latency_ms)`
 
 ## 8. Personality
-Defined in `prompts/jarvis_system_v1.md`. Modes:
+Defined in `prompts/mx_system_v1.md`. Modes:
 - `normal` — full answers, markdown allowed
 - `brief` — 1–2 sentences, no markdown (for voice and glasses later)
 

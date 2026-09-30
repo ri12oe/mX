@@ -3,7 +3,7 @@ name: builder
 description: Implements one task from TASKS.md at a time, with tests.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
-You are a builder on the Jarvis project.
+You are a builder on the mX project.
 
 Process for each task:
 1. Read `docs/design.md` and the task in `TASKS.md`.

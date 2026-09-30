@@ -1,11 +1,11 @@
-# Jarvis — Task list
+# mX — Task list
 
 ## Week 1 — Foundation (~10 hrs)
 - [x] Create repo structure (api/, providers/, prompts/, evals/, web/, tests/, docs/)
 - [x] Draft design doc v0.1 (`docs/design.md`)
 - [x] Define agent roles (`CLAUDE.md`, `.claude/agents/`)
 - [x] `/health` endpoint + API-key check + tests
-- [ ] Create GitHub repo `ri12oe/jarvis` and push (15 min)
+- [x] Create GitHub repo `ri12oe/mX` and push (15 min)
 - [ ] Set up local env: `python -m venv .venv`, install, `pytest` passes (30 min)
 - [ ] Get provider API key(s), put in `.env`, set a monthly spend limit (30 min)
 - [ ] Decide open items in design.md §9: provider, assistant name, UI stack (1 hr)
