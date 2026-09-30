@@ -62,7 +62,7 @@ def test_real_mx_prompt_loads_in_both_modes():
     normal = load_system_prompt("normal", settings.system_prompt_file)
     brief = load_system_prompt("brief", settings.system_prompt_file)
 
-    assert normal.version == brief.version == "mx_system_v1"
+    assert normal.version == brief.version == "mx_system_v3"
     assert normal.text.startswith("You are mX")
     assert "Mode: normal" in normal.text and "Mode: brief" in brief.text
     assert "<!--" not in normal.text and "{mode}" not in normal.text

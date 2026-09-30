@@ -102,7 +102,7 @@ def test_turn_is_saved_with_usage(client: TestClient, conn: sqlite3.Connection):
 
     usage = conn.execute("SELECT * FROM usage").fetchone()
     assert usage["message_id"] == meta["message_id"]
-    assert (usage["provider"], usage["model"], usage["prompt_version"]) == ("fake", "claude-opus-5-5", "mx_system_v1")
+    assert (usage["provider"], usage["model"], usage["prompt_version"]) == ("fake", "claude-opus-5-5", "mx_system_v3")
     assert (usage["input_tokens"], usage["output_tokens"]) == (500, 40)
     assert usage["cost_usd"] == pytest.approx(0.0028)
     assert usage["latency_ms"] >= 0

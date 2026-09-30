@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     primary_provider: str = "anthropic"
     primary_model: str = "claude-opus-5-5"
     db_path: str = "./data/mx.db"
-    system_prompt_file: str = "prompts/mx_system_v1.md"
+    system_prompt_file: str = "prompts/mx_system_v3.md"
     # Browser origins allowed to call the API (Vite dev server). In .env, write as JSON.
     cors_origins: list[str] = ["http://localhost:5173"]
 
