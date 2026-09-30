@@ -78,7 +78,7 @@ All routes except `/health` require header `X-mX-Key`.
 | GET | `/conversations` | List conversations, newest `updated_at` first, `?limit=50` |
 | GET | `/conversations/{id}` | Conversation + its messages, oldest first; 404 if unknown |
 | DELETE | `/conversations/{id}` | Delete conversation (cascades); 204, or 404 if unknown |
-| GET | `/images/{id}` | Image bytes with its `Content-Type`; 404 if unknown (Week 3) |
+| GET | `/images/{id}` | Image bytes with its `Content-Type` (plus `X-Content-Type-Options: nosniff`, long private cache); 404 if unknown |
 
 ### `POST /chat` request
 ```json
@@ -91,9 +91,9 @@ All routes except `/health` require header `X-mX-Key`.
 ```
 - `conversation_id` omitted → a new conversation is created.
 - `message`: 1–20,000 characters.
-- `images` (Week 3): base64 only, max 4, max 5 MB each after decoding, types jpeg/png/gif/webp.
+- `images`: base64 (or a `data:` URL), max 4, max 5 MB each after decoding, types jpeg/png/gif/webp. The type is read from the file's signature bytes, never from the client. Bad images get a 422 with `detail: {code: "invalid_image", message}` before the model is called. Images are stored with the turn (same transaction) and listed in the user message's `image_refs`.
 - `mode`: `"normal"` (default) or `"brief"`.
-- Request bodies over ~25 MB are rejected (413).
+- Request bodies over 30 MB are rejected (413). 4 images × 5 MB become ~26.7 MB as base64, so 25 MB was too small; 30 MB stays under the Claude API's 32 MB request limit.
 
 ### `POST /chat` response (SSE)
 `StreamingResponse` with `Content-Type: text/event-stream`. Each event has a JSON `data` field:
@@ -106,7 +106,7 @@ All routes except `/health` require header `X-mX-Key`.
 | `error` | `{code, message}` | Failure after streaming started; stream then ends |
 
 Errors **before** streaming starts are normal JSON HTTP errors:
-401 bad/missing key · 404 unknown `conversation_id` · 413 too large · 422 validation or the model declined (`provider_refused`) · 502 provider auth/bad request · 503 provider rate-limited or unavailable. Provider errors have `detail: {code, message}`. The route waits for the first chunk before responding, so provider failures before any text become HTTP errors. After streaming starts, failures arrive as an `error` event, including `save_failed` if the database write fails.
+401 bad/missing key · 404 unknown `conversation_id` · 413 too large · 422 validation, a bad image (`invalid_image`), or the model declined (`provider_refused`) · 502 provider auth/bad request · 503 provider rate-limited or unavailable. Provider errors have `detail: {code, message}`. The route waits for the first chunk before responding, so provider failures before any text become HTTP errors. After streaming starts, failures arrive as an `error` event, including `save_failed` if the database write fails.
 
 Clients must read the stream with `fetch` + a `ReadableStream` reader. The browser's `EventSource` can't send POST bodies or custom headers.
 
@@ -137,7 +137,7 @@ class ModelProvider(Protocol):
 - HTTP status mapping (Anthropic): 401/403 → auth · 402/429 → rate limit (incl. billing/spend limit) · 408/409/5xx/529 and network errors → unavailable · other 4xx (incl. 404 unknown model) → bad request.
 - Timeouts and retries use the SDK's built-in settings: connect timeout 10 s, read timeout 10 min (a long reasoned reply can take minutes; a shorter timeout would cut it off and the retry would bill it again), `max_retries=2`. No custom retry loop. Never retry once the first token has been sent.
 - `providers/errors.py` defines `ProviderError` and its subclasses `ProviderAuthError`, `ProviderRateLimitError`, `ProviderUnavailableError`, `ProviderBadRequestError`, `ProviderRefusalError` and `UnknownProviderError`. Adapters convert SDK exceptions into these. The API layer converts them into HTTP codes (before streaming) or an SSE `error` event (after).
-- **History window:** at most **20 messages** are sent to the model: the last 19 stored plus the new one, trimmed so the history always starts with a user message. Only the current turn's images are sent; older images become the text `[image omitted]`.
+- **History window:** at most **20 messages** are sent to the model: the last 19 stored plus the new one, trimmed so the history always starts with a user message. Only the current turn's images are sent (as image blocks before the text); each older image becomes a line `[image omitted]` above that message's text.
 
 ## 7. Data model (SQLite)
 Uses the standard-library `sqlite3` module with sync calls; no ORM and no migration tool.

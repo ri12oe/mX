@@ -8,11 +8,17 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 
+@dataclass(frozen=True)
+class ImageData:
+    media_type: str  # "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    data: bytes
+
+
 @dataclass
 class Message:
     role: str  # "user" | "assistant"
     content: str
-    images: list[str] | None = None  # base64 strings (Week 3)
+    images: list[ImageData] | None = None  # only on the current turn's user message
 
 
 @dataclass
