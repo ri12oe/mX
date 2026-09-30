@@ -122,7 +122,7 @@ class ModelProvider(Protocol):
 ```
 - `ModelResponse` has text, the model that actually answered, input/output token counts, and `stop_reason` (`"max_tokens"` means the reply was cut off), so cost is logged the same way for every provider.
 - `stream` is a plain `def` that returns an async iterator. It yields `str` chunks, and its **last item is a `ModelResponse`** with the full text and token counts. The Anthropic adapter gets this from the SDK's final message.
-- **Per-mode settings** (the `/chat` route passes these to the provider):
+- **Per-mode settings** (`MODE_OPTIONS` in `api/prompts.py`; the `/chat` route passes these to the provider):
 
   | Mode | `max_tokens` | `effort` | Why |
   |---|---|---|---|
@@ -171,7 +171,7 @@ Loader (`api/prompts.py`):
 
 ## 9. Pricing and cost
 `api/pricing.py` holds a dict `{model_id: (input_usd_per_million_tokens, output_usd_per_million_tokens)}`.
-Rio fills it in from Anthropic's pricing page. Cost is `in_tokens × in_price / 1e6 + out_tokens × out_price / 1e6`.
+Filled in 2026-09-30 for Opus 5.5 plus the Opus/Sonnet models that refusal fallbacks can route to; verify against Anthropic's pricing page when adding or changing a model. Cost is `in_tokens × in_price / 1e6 + out_tokens × out_price / 1e6`.
 For a model missing from the table, `cost_usd` is NULL and a warning is logged.
 
 ## 10. Config, security, and logging

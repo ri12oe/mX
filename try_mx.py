@@ -9,34 +9,26 @@ Temporary helper until POST /chat exists (Week 2, task 8). Not saved to the data
 """
 import asyncio
 import sys
-from pathlib import Path
 
 from api.config import settings
+from api.pricing import cost_usd
+from api.prompts import MODE_OPTIONS, load_system_prompt
 from providers import create_provider
 from providers.base import Message, ModelResponse
 
-MODES = {"normal": {"max_tokens": 16000, "effort": "high"}, "brief": {"max_tokens": 2048, "effort": "low"}}
-PRICE_PER_MTOK = {"claude-opus-5-5": (4.00, 20.00), "claude-sonnet-5-5": (2.00, 10.00)}  # USD in/out
-
-
-def load_system_prompt(mode: str) -> str:
-    return Path(settings.system_prompt_file).read_text(encoding="utf-8").replace("{mode}", mode)
-
 
 def cost(reply: ModelResponse) -> str:
-    prices = PRICE_PER_MTOK.get(reply.model)
-    if prices is None:
-        return "cost unknown"
-    return f"~${reply.input_tokens * prices[0] / 1e6 + reply.output_tokens * prices[1] / 1e6:.4f}"
+    usd = cost_usd(reply.model, reply.input_tokens, reply.output_tokens)
+    return "cost unknown" if usd is None else f"~${usd:.4f}"
 
 
 async def chat(mode: str) -> None:
     provider = create_provider(
         settings.primary_provider, api_key=settings.anthropic_api_key, model=settings.primary_model
     )
-    system = load_system_prompt(mode)
+    prompt = load_system_prompt(mode, settings.system_prompt_file)
     history: list[Message] = []
-    print(f"mX ({settings.primary_model}, {mode} mode). Type 'exit' to quit.")
+    print(f"mX ({settings.primary_model}, {mode} mode, {prompt.version}). Type 'exit' to quit.")
 
     while True:
         user = input("\nYou: ").strip()
@@ -46,7 +38,7 @@ async def chat(mode: str) -> None:
             continue
         history.append(Message(role="user", content=user))
         print("\nmX: ", end="", flush=True)
-        async for item in provider.stream(history, system, **MODES[mode]):
+        async for item in provider.stream(history, prompt.text, **MODE_OPTIONS[mode]):
             if isinstance(item, str):
                 print(item, end="", flush=True)
             else:
@@ -57,8 +49,8 @@ async def chat(mode: str) -> None:
 
 if __name__ == "__main__":
     chosen = sys.argv[1] if len(sys.argv) > 1 else "normal"
-    if chosen not in MODES:
-        sys.exit(f"Mode must be one of: {', '.join(MODES)}")
+    if chosen not in MODE_OPTIONS:
+        sys.exit(f"Mode must be one of: {', '.join(MODE_OPTIONS)}")
     try:
         asyncio.run(chat(chosen))
     except KeyboardInterrupt:

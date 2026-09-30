@@ -20,7 +20,7 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 - [x] 4. Provider types: `stream` yields `str | ModelResponse`, `providers/errors.py`, `tests/fakes.py` with `FakeProvider`, `get_provider()` dependency (§6, §11) (1 h)
 - [x] 5. Anthropic adapter `generate()`: SDK timeout/retries, error mapping, mocked tests (§6) (2 h)
 - [x] 6. Anthropic adapter `stream()`: final item is a `ModelResponse`, mocked tests + one `@pytest.mark.live` smoke test (§6, §11) (2 h)
-- [ ] 7. Prompt loader (`api/prompts.py`) and pricing (`api/pricing.py`) with cost function, plus tests (§8, §9) (1 h)
+- [x] 7. Prompt loader (`api/prompts.py`) and pricing (`api/pricing.py`) with cost function, plus tests (§8, §9) (1 h)
 - [ ] 8. `POST /chat` with SSE: meta/delta/done/error events, 20-message history window, atomic save, usage row, log line; tests with `FakeProvider` incl. error path (§5, §6) (3 h)
 - [ ] 9. `GET /conversations`, `GET /conversations/{id}`, `DELETE /conversations/{id}` with cascade and 404s; tests (§5) (1–2 h)
 
