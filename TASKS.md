@@ -35,5 +35,6 @@ Build in this order. Section numbers refer to `docs/design.md` v0.3.
 
 ## Week 5 — Ship
 - [x] Test coverage pass → Python 99% (branch), web 97% lines; see PR
-- [ ] Dockerfile (DB on a `/data` volume) + deploy
+- [x] Dockerfile (DB on a `/data` volume), fly.toml, web login, heartbeats, security headers → `docs/deploy.md`
+- [ ] Deploy to Fly.io (Rio runs the steps in `docs/deploy.md`)
 - [ ] Phase 1 review

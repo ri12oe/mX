@@ -15,6 +15,6 @@ Read these before doing anything:
 - If the design doc and a request disagree, point it out instead of guessing.
 
 ## Commands
-- Install: `pip install -r requirements.txt`
+- Install: `pip install -r requirements-dev.txt` (the Docker image uses only `requirements.txt`)
 - Run: `uvicorn api.main:app --reload`
 - Test: `pytest -q`

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, deleteConversation, getConversation, listConversations, streamChat, type ApiConfig } from "./api";
+import { deleteConversation, getConversation, isSignedOut, listConversations, logout, streamChat, whoami } from "./api";
 import { Composer } from "./components/Composer";
-import { KeyDialog } from "./components/KeyDialog";
+import { LoginDialog } from "./components/LoginDialog";
 import { MessageView } from "./components/MessageView";
 import { Sidebar } from "./components/Sidebar";
-import { loadConfig, loadMode, saveConfig, saveMode } from "./settings";
+import { loadMode, saveMode } from "./settings";
 import type { ChatEvent, ConversationSummary, Mode, StoredMessage, UiMessage } from "./types";
 
 const SUGGESTIONS = [
@@ -21,9 +21,10 @@ function fromStored(m: StoredMessage): UiMessage {
   return { id: m.id, role: m.role, content: m.content, images: [], imageRefs: m.image_refs };
 }
 
+type Auth = "checking" | "signed-in" | "signed-out";
+
 export default function App() {
-  const [config, setConfig] = useState<ApiConfig | null>(loadConfig);
-  const [showKeyDialog, setShowKeyDialog] = useState(() => loadConfig() === null);
+  const [auth, setAuth] = useState<Auth>("checking");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
@@ -36,26 +37,38 @@ export default function App() {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const handleError = useCallback((err: unknown) => {
-    if (err instanceof ApiError && err.status === 401) {
-      setShowKeyDialog(true);
-      setBanner("Your API key was rejected. Please reconnect.");
+    if (isSignedOut(err)) {
+      setAuth("signed-out");
+      setBanner("Your session ended. Please sign in again.");
     } else {
       setBanner(err instanceof Error ? err.message : "Something went wrong.");
     }
   }, []);
 
+  // On load: are we already signed in (valid session cookie)?
+  useEffect(() => {
+    whoami()
+      .then(() => setAuth("signed-in"))
+      .catch((err: unknown) => {
+        if (isSignedOut(err)) setAuth("signed-out");
+        else {
+          setAuth("signed-in"); // show the app; requests will report the problem
+          handleError(err);
+        }
+      });
+  }, [handleError]);
+
   const refreshList = useCallback(async () => {
-    if (!config) return;
     try {
-      setConversations(await listConversations(config));
+      setConversations(await listConversations());
     } catch (err) {
       handleError(err);
     }
-  }, [config, handleError]);
+  }, [handleError]);
 
   useEffect(() => {
-    void refreshList();
-  }, [refreshList]);
+    if (auth === "signed-in") void refreshList();
+  }, [auth, refreshList]);
 
   // Keep the newest text in view while a reply streams in.
   useEffect(() => {
@@ -75,12 +88,12 @@ export default function App() {
   }
 
   async function openConversation(id: string) {
-    if (!config || id === activeId) return setSidebarOpen(false);
+    if (id === activeId) return setSidebarOpen(false);
     stop();
     setSidebarOpen(false);
     setBanner(null);
     try {
-      const detail = await getConversation(config, id);
+      const detail = await getConversation(id);
       setActiveId(id);
       setMessages(detail.messages.map(fromStored));
     } catch (err) {
@@ -89,14 +102,27 @@ export default function App() {
   }
 
   async function removeConversation(c: ConversationSummary) {
-    if (!config || !window.confirm(`Delete "${c.title}"? This can't be undone.`)) return;
+    if (!window.confirm(`Delete "${c.title}"? This can't be undone.`)) return;
     try {
-      await deleteConversation(config, c.id);
+      await deleteConversation(c.id);
       if (c.id === activeId) startNewChat();
       await refreshList();
     } catch (err) {
       handleError(err);
     }
+  }
+
+  async function signOut() {
+    stop();
+    try {
+      await logout();
+    } catch {
+      // the cookie may already be gone; sign out locally either way
+    }
+    startNewChat();
+    setConversations([]);
+    setBanner(null);
+    setAuth("signed-out");
   }
 
   function changeMode(next: Mode) {
@@ -105,7 +131,6 @@ export default function App() {
   }
 
   async function send(text: string, images: string[]) {
-    if (!config) return setShowKeyDialog(true);
     const assistantId = tempId();
     const update = (patch: (m: UiMessage) => Partial<UiMessage>) =>
       setMessages((all) => all.map((m) => (m.id === assistantId ? { ...m, ...patch(m) } : m)));
@@ -141,7 +166,6 @@ export default function App() {
 
     try {
       await streamChat(
-        config,
         { message: text, mode, conversation_id: activeId ?? undefined, images: images.length ? images : undefined },
         onEvent,
         controller.signal,
@@ -173,7 +197,7 @@ export default function App() {
         onSelect={(id) => void openConversation(id)}
         onNew={startNewChat}
         onDelete={(c) => void removeConversation(c)}
-        onSettings={() => setShowKeyDialog(true)}
+        onSignOut={() => void signOut()}
       />
       {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
 
@@ -210,7 +234,9 @@ export default function App() {
             </div>
           ) : (
             <div className="message-column">
-              {config && messages.map((m) => <MessageView key={m.id} message={m} config={config} />)}
+              {messages.map((m) => (
+                <MessageView key={m.id} message={m} />
+              ))}
               <div ref={bottomRef} />
             </div>
           )}
@@ -229,16 +255,12 @@ export default function App() {
         </div>
       </main>
 
-      {showKeyDialog && (
-        <KeyDialog
-          initial={config}
-          onSave={(next) => {
-            saveConfig(next);
-            setConfig(next);
-            setShowKeyDialog(false);
+      {auth === "signed-out" && (
+        <LoginDialog
+          onSignedIn={() => {
             setBanner(null);
+            setAuth("signed-in");
           }}
-          onCancel={config ? () => setShowKeyDialog(false) : undefined}
         />
       )}
     </div>

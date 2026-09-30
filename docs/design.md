@@ -68,7 +68,12 @@ Module layout:
 - `providers/base.py`, `providers/errors.py`, `providers/anthropic_provider.py`
 
 ## 5. API (Phase 1)
-All routes except `/health` require header `X-mX-Key`.
+All routes except `/health` and `/auth/*` require **either** the `X-mX-Key` header (scripts, evals) **or** a valid session cookie from `POST /auth/login` (the web app). See §10.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/auth/login` | `{password}` → 204 + `mx_session` cookie; 401 wrong password; 429 after 5 failures (15 min) |
+| POST | `/auth/logout` | 204, clears the cookie |
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -106,7 +111,7 @@ All routes except `/health` require header `X-mX-Key`.
 | `error` | `{code, message}` | Failure after streaming started; stream then ends |
 
 Errors **before** streaming starts are normal JSON HTTP errors:
-401 bad/missing key · 404 unknown `conversation_id` · 413 too large · 422 validation, a bad image (`invalid_image`), or the model declined (`provider_refused`) · 502 provider auth/bad request · 503 provider rate-limited or unavailable. Provider errors have `detail: {code, message}`. The route waits for the first chunk before responding, so provider failures before any text become HTTP errors. After streaming starts, failures arrive as an `error` event, including `save_failed` if the database write fails.
+401 bad/missing key · 404 unknown `conversation_id` · 413 too large · 422 validation, a bad image (`invalid_image`), or the model declined (`provider_refused`) · 502 provider auth/bad request · 503 provider rate-limited or unavailable. Provider errors have `detail: {code, message}`. The route waits up to 10 s for the first chunk, so quick provider failures (bad key, overloaded, refused) become HTTP errors. If the model is still thinking after that, streaming starts anyway, and a `: ping` SSE comment is sent every 15 s while waiting, so proxies with idle timeouts (Fly.io: 60 s) keep the connection open. If the client disconnects, the pending model call is cancelled. After streaming starts, failures arrive as an `error` event, including `save_failed` if the database write fails.
 
 Clients must read the stream with `fetch` + a `ReadableStream` reader. The browser's `EventSource` can't send POST bodies or custom headers.
 
@@ -183,6 +188,9 @@ Settings (`api/config.py`, loaded from `.env`):
 `OPENAI_API_KEY` and `DATABASE_URL` are removed.
 
 - **Auth:** the key is compared with `hmac.compare_digest` (constant-time). The app **refuses to start** if `MX_API_KEY` is empty, starts with `change-me`, or is shorter than 32 characters.
+- **Web login (Week 5):** `MX_PASSWORD` (≥ 12 chars, required) → `POST /auth/login` sets `mx_session`, an **HttpOnly, Secure, SameSite=Strict** cookie valid 30 days. The token is `<expiry>.<HMAC-SHA256(MX_API_KEY, expiry)>`: stateless, and changing `MX_API_KEY` signs every device out. 5 wrong passwords in 15 min lock logins for 15 min (in memory; the key still works). No key or password is stored in the browser.
+- **Same origin:** in production the API serves the built web app at `/` (`WEB_DIST`); in development Vite proxies API paths to uvicorn. CORS is only for other origins.
+- **Security headers** on every response: a strict `Content-Security-Policy` (scripts only from the site; `unsafe-inline` styles for KaTeX; skipped on `/docs` and `/redoc`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
 - **CORS:** `CORS_ORIGINS` defaults to `["http://localhost:5173"]` (the Vite dev server). The `X-mX-Key` and `Content-Type` headers are allowed.
 - **Logging:** stdlib `logging`, one line per chat turn with conversation ID, model, tokens, cost, latency and status. **Never** log message content, images, or keys.
 
@@ -202,7 +210,8 @@ Decided 2026-09-30:
 - [x] **Provider:** Anthropic Claude API only for Phase 1. Backup provider deferred to a later phase (see §3).
 - [x] **Name and tone:** mX. Formal, teacher-like broad expert (see §8).
 - [x] **Web UI stack:** React + Vite, chosen so Rio can learn React. Needs Node.js, and CORS on the API (§10). **TypeScript** (decided 2026-09-30, Week 4): matches the typed Python side and catches mistakes while learning. Replies render markdown, code highlighting, and KaTeX math; the API key is stored in the browser's localStorage (acceptable for a personal local app; revisit before deploy). See `web/README.md`.
-- [x] **Deploy host:** deferred to Week 5. Constraint: host must offer a persistent disk for the SQLite file.
+- [x] **Deploy host: Fly.io** (decided 2026-09-30, Week 5, after a researcher comparison of Fly.io, Railway, Render, and a VPS): about $2/month with a 1 GB volume, HTTPS on `*.fly.dev`, and no total streaming cap as long as bytes flow (hence heartbeats). One machine only (SQLite). Guide: `docs/deploy.md`.
+- [x] **Web login: password + HttpOnly session cookie** (decided 2026-09-30, Week 5), replacing the API key in localStorage (§10).
 - [x] **Images:** stored as BLOBs in SQLite (§7).
 - [x] **Failed/aborted turns:** save nothing (§5).
 - [x] **History window:** last 20 messages; older images omitted (§6).

@@ -1,0 +1,38 @@
+# Fly.io config for mX. See docs/deploy.md for the step-by-step guide.
+# `fly launch --no-deploy` replaces `app` with your app's name.
+app = "mx-change-me"
+primary_region = "iad"
+
+[build]
+  # Builds the Dockerfile in this folder (remotely, for x86).
+
+[env]
+  DB_PATH = "/data/mx.db"
+  PRIMARY_PROVIDER = "anthropic"
+  PRIMARY_MODEL = "claude-opus-5-5"
+  # Secrets (MX_API_KEY, MX_PASSWORD, ANTHROPIC_API_KEY) are set with `fly secrets set`, never here.
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # Stop the machine when idle (cheaper); it wakes in about a second on the next request.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+
+# SQLite lives on this volume. Keep exactly ONE machine (`fly scale count 1`):
+# a second machine would get its own empty volume.
+[mounts]
+  source = "mx_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

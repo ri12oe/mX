@@ -1,9 +1,12 @@
 """POST /chat: send a message, stream the reply as Server-Sent Events (design.md §5, §6).
 
 Event stream: `meta` → `delta`* → `done`, or `error` if something fails after
-streaming started. Failures before the first text are normal HTTP errors.
+streaming started. Failures in the first few seconds are normal HTTP errors.
+While the model is thinking, a `: ping` comment is sent every few seconds so
+proxies (e.g. Fly.io's 60 s idle timeout) don't drop the connection.
 A turn is saved only after the reply completes; on any failure nothing is saved.
 """
+import asyncio
 import json
 import logging
 import sqlite3
@@ -19,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from api import db
 from api.config import settings
-from api.deps import get_db, get_provider, require_key
+from api.deps import get_db, get_provider, require_auth
 from api.images import ImageError, decode_images
 from api.pricing import cost_usd
 from api.prompts import MODE_OPTIONS, Mode, SystemPrompt, load_system_prompt
@@ -40,6 +43,9 @@ MAX_BODY_BYTES = 30 * 1024 * 1024  # fits 4 × 5 MB images as base64 (+33%) plus
 HISTORY_WINDOW = 20  # max messages sent to the model, including the new one
 IMAGE_OMITTED = "[image omitted]"
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+FIRST_ITEM_WAIT_SECONDS = 10.0  # quick failures within this become HTTP errors
+HEARTBEAT_SECONDS = 15.0  # comment line sent while waiting for the model
+HEARTBEAT = ": ping\n\n"
 
 
 class ChatRequest(BaseModel):
@@ -80,7 +86,7 @@ def limit_body_size(request: Request) -> None:
         raise HTTPException(status_code=413, detail="Request body too large")
 
 
-@router.post("/chat", dependencies=[Depends(require_key), Depends(limit_body_size)])
+@router.post("/chat", dependencies=[Depends(require_auth), Depends(limit_body_size)])
 async def chat(
     req: ChatRequest,
     conn: sqlite3.Connection = Depends(get_db),
@@ -90,8 +96,9 @@ async def chat(
     pending = start_turn(conn, req)
     prompt = load_system_prompt(req.mode, settings.system_prompt_file)
     stream = provider.stream(pending.history, prompt.text, **MODE_OPTIONS[req.mode])
-    first = await first_item(stream, pending)
-    events = stream_events(stream, first, pending, prompt, provider.name, conn)
+    next_item = asyncio.ensure_future(anext(stream))
+    await fail_fast(next_item, pending)
+    events = stream_events(stream, next_item, pending, prompt, provider.name, conn)
     return StreamingResponse(events, media_type="text/event-stream", headers=SSE_HEADERS)
 
 
@@ -145,18 +152,21 @@ def with_image_markers(message: dict[str, Any]) -> str:
     return "\n".join([*markers, message["content"]])
 
 
-async def first_item(
-    stream: AsyncIterator[str | ModelResponse], pending: PendingTurn
-) -> str | ModelResponse:
-    """Wait for the first chunk so failures before any text become HTTP errors."""
-    try:
-        return await anext(stream)
-    except ProviderError as exc:
+async def fail_fast(next_item: asyncio.Future[str | ModelResponse], pending: PendingTurn) -> None:
+    """Wait briefly for the first chunk, so quick failures (bad key, overloaded,
+    refused) become HTTP errors. If the model is still thinking after
+    FIRST_ITEM_WAIT_SECONDS, start streaming anyway so the connection isn't silent.
+    """
+    await asyncio.wait({next_item}, timeout=FIRST_ITEM_WAIT_SECONDS)
+    if not next_item.done():
+        return
+    exc = next_item.exception()
+    if isinstance(exc, ProviderError):
         log_turn(pending, status=exc.code)
         raise HTTPException(
             status_code=http_status_for(exc), detail={"code": exc.code, "message": str(exc)}
         ) from exc
-    except StopAsyncIteration:
+    if isinstance(exc, StopAsyncIteration):
         log_turn(pending, status="provider_error")
         raise HTTPException(
             status_code=502, detail={"code": "provider_error", "message": "Empty reply stream."}
@@ -176,7 +186,7 @@ def http_status_for(exc: ProviderError) -> int:
 
 async def stream_events(
     stream: AsyncIterator[str | ModelResponse],
-    first: str | ModelResponse,
+    next_item: asyncio.Future[str | ModelResponse],
     pending: PendingTurn,
     prompt: SystemPrompt,
     provider_name: str,
@@ -186,11 +196,17 @@ async def stream_events(
         "conversation_id": pending.conversation_id,
         "message_id": pending.assistant_message_id,
     })
-    item = first
     try:
-        while not isinstance(item, ModelResponse):
+        while True:
+            while not next_item.done():
+                await asyncio.wait({next_item}, timeout=HEARTBEAT_SECONDS)
+                if not next_item.done():
+                    yield HEARTBEAT
+            item = next_item.result()
+            if isinstance(item, ModelResponse):
+                break
             yield sse("delta", {"text": item})
-            item = await anext(stream)
+            next_item = asyncio.ensure_future(anext(stream))
     except ProviderError as exc:
         log_turn(pending, status=exc.code)
         yield sse("error", {"code": exc.code, "message": str(exc)})
@@ -203,6 +219,12 @@ async def stream_events(
         # Close the model stream even if the client disconnected (shielded from
         # cancellation), so we stop paying for text nobody will read.
         with anyio.CancelScope(shield=True):
+            if not next_item.done():
+                next_item.cancel()
+                try:
+                    await next_item
+                except (asyncio.CancelledError, Exception):
+                    pass
             await stream.aclose()
 
     reply = item

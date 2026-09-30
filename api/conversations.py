@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from api import db
-from api.deps import get_db, require_key
+from api.deps import get_db, require_auth
 
-router = APIRouter(prefix="/conversations", dependencies=[Depends(require_key)])
+router = APIRouter(prefix="/conversations", dependencies=[Depends(require_auth)])
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200

@@ -6,14 +6,14 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from api import db
-from api.deps import get_db, require_key
+from api.deps import get_db, require_auth
 from providers.base import ImageData
 
 MAX_IMAGES = 4
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # after decoding (the Claude API's per-image limit)
 DATA_URL_PREFIX = "data:"
 
-router = APIRouter(dependencies=[Depends(require_key)])
+router = APIRouter(dependencies=[Depends(require_auth)])
 
 
 class ImageError(ValueError):

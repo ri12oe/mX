@@ -13,9 +13,11 @@ from pathlib import Path
 import pytest
 
 TEST_API_KEY = "test-key-" + "x" * 40
+TEST_PASSWORD = "correct horse battery staple"
 TEST_DB_DIR = Path(tempfile.mkdtemp(prefix="mx-test-"))
 
 os.environ["MX_API_KEY"] = TEST_API_KEY
+os.environ["MX_PASSWORD"] = TEST_PASSWORD
 os.environ["DB_PATH"] = str(TEST_DB_DIR / "app.db")
 
 

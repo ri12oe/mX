@@ -15,10 +15,15 @@ You need two terminals, both started from the project root.
    npm install      # first time only
    npm run dev
    ```
-3. Open http://localhost:5173 and enter the API address (`http://127.0.0.1:8000`) and your `MX_API_KEY` from `.env`.
-   They're saved in this browser only (localStorage).
+3. Open http://localhost:5173 and sign in with `MX_PASSWORD` from `.env`. Vite forwards the API paths to port 8000, so
+   the page and the API share one origin and the HttpOnly session cookie just works. Nothing is stored in localStorage
+   except the Normal/Brief choice.
+
+In production the API serves the built app itself (`npm run build` → `web/dist`, done by the Dockerfile); see
+`docs/deploy.md`.
 
 ## Features
+- Password sign-in; the server sets an HttpOnly session cookie (30 days). **Sign out** is in the sidebar.
 - Streaming replies (`fetch` + a stream reader; see `src/sse.ts`), with a **Stop** button. A stopped or failed reply is not saved.
 - Normal / Brief mode toggle.
 - Images: attach, paste, or drop up to 4 (JPEG, PNG, GIF, WebP, max 5 MB each).
@@ -38,9 +43,9 @@ You need two terminals, both started from the project root.
 ## Layout
 | File | Role |
 |---|---|
-| `src/api.ts` | API client (`X-mX-Key` on every call, typed errors, `streamChat`) |
+| `src/api.ts` | API client (same-origin with the session cookie, typed errors, `login`/`logout`, `streamChat`) |
 | `src/sse.ts` | Server-Sent Events parser |
 | `src/App.tsx` | State and wiring: conversations, sending, streaming events |
-| `src/components/` | `Sidebar`, `MessageView`, `Composer`, `KeyDialog`, `Markdown`, `AuthImage` |
+| `src/components/` | `Sidebar`, `MessageView`, `Composer`, `LoginDialog`, `Markdown`, `StoredImage` |
 | `src/markdown.ts` | Keeps `$` prices from being read as math (Pandoc's inline-math rule) |
 | `src/styles.css` | Design tokens and layout (light/dark) |

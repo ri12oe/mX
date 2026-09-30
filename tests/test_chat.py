@@ -46,6 +46,8 @@ def post_chat(client: TestClient, **body: Any):
 def parse_sse(text: str) -> list[tuple[str, dict[str, Any]]]:
     events = []
     for block in text.strip().split("\n\n"):
+        if all(line.startswith(":") for line in block.splitlines()):
+            continue  # heartbeat comment, like ": ping"
         lines = dict(line.split(": ", 1) for line in block.splitlines())
         events.append((lines["event"], json.loads(lines["data"])))
     return events
