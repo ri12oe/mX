@@ -6,7 +6,7 @@
 - [x] Define agent roles (`CLAUDE.md`, `.claude/agents/`)
 - [x] `/health` endpoint + API-key check + tests
 - [x] Create GitHub repo `ri12oe/mX` and push (15 min)
-- [ ] Set up local env: `python -m venv .venv`, install, `pytest` passes (30 min)
+- [x] Set up local env: `python -m venv .venv`, install, `pytest` passes (30 min)
 - [ ] Get provider API key(s), put in `.env`, set a monthly spend limit (30 min)
 - [ ] Decide open items in design.md §9: provider, assistant name, UI stack (1 hr)
 - [ ] Review design.md with the architect agent and refine it (1–2 hrs)
