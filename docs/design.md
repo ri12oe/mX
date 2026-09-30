@@ -201,7 +201,7 @@ Settings (`api/config.py`, loaded from `.env`):
 Decided 2026-09-30:
 - [x] **Provider:** Anthropic Claude API only for Phase 1. Backup provider deferred to a later phase (see §3).
 - [x] **Name and tone:** mX. Formal, teacher-like broad expert (see §8).
-- [x] **Web UI stack:** React + Vite, chosen so Rio can learn React. Needs Node.js, and CORS on the API (§10). JS vs. TypeScript to be decided at the start of Week 4.
+- [x] **Web UI stack:** React + Vite, chosen so Rio can learn React. Needs Node.js, and CORS on the API (§10). **TypeScript** (decided 2026-09-30, Week 4): matches the typed Python side and catches mistakes while learning. Replies render markdown, code highlighting, and KaTeX math; the API key is stored in the browser's localStorage (acceptable for a personal local app; revisit before deploy). See `web/README.md`.
 - [x] **Deploy host:** deferred to Week 5. Constraint: host must offer a persistent disk for the SQLite file.
 - [x] **Images:** stored as BLOBs in SQLite (§7).
 - [x] **Failed/aborted turns:** save nothing (§5).
