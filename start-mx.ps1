@@ -24,6 +24,9 @@ if (-not (Test-Path ".env")) {
 if (-not (Select-String -Path ".env" -Pattern "^MX_PASSWORD=.{12,}" -Quiet)) {
     Fail "Add MX_PASSWORD=... (at least 12 characters) to .env; it's the web login password."
 }
+if (-not (Select-String -Path ".env" -Pattern "^MX_API_KEY=.{32,}" -Quiet)) {
+    Fail "MX_API_KEY in .env must be at least 32 characters. Generate one: .venv\Scripts\python.exe -c `"import secrets; print(secrets.token_urlsafe(32))`""
+}
 
 # Already running? Then just open it.
 $running = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue

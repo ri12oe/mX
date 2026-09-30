@@ -1,4 +1,4 @@
-fastapi>=0.115
+fastapi>=0.118  # 0.106-0.117 close yield-dependencies (the DB) before a streamed body is sent
 uvicorn>=0.30
 pydantic>=2.7
 pydantic-settings>=2.3

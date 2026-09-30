@@ -100,11 +100,15 @@ export async function streamChat(
 
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   const parser = new SSEParser();
+  let finished = false; // saw `done` or `error`
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
     for (const message of parser.push(value)) {
-      onEvent({ type: message.event, ...JSON.parse(message.data) } as ChatEvent);
+      const event = { type: message.event, ...JSON.parse(message.data) } as ChatEvent;
+      finished ||= event.type === "done" || event.type === "error";
+      onEvent(event);
     }
   }
+  if (!finished) throw new ApiError(0, "incomplete", "The reply stopped unexpectedly.");
 }

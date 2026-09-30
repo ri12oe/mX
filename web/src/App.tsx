@@ -146,16 +146,22 @@ export default function App() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // The server saves a turn only when it completes (design.md §5), so a new
+    // conversation's id is adopted on `done`. Adopting it at `meta` would make
+    // the next message after a failed or stopped first turn point at an id
+    // that was never saved (404).
+    let conversationId: string | null = null;
     const onEvent = (event: ChatEvent) => {
       switch (event.type) {
         case "meta":
-          setActiveId(event.conversation_id);
+          conversationId = event.conversation_id;
           break;
         case "delta":
           update((m) => ({ content: m.content + event.text }));
           break;
         case "done":
           update(() => ({ streaming: false, usage: event.usage, stopReason: event.stop_reason }));
+          setActiveId(conversationId);
           void refreshList();
           break;
         case "error":

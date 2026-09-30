@@ -215,6 +215,12 @@ async def stream_events(
         log_turn(pending, status="provider_error")
         yield sse("error", {"code": "provider_error", "message": "Reply ended without a final message."})
         return
+    except Exception:
+        # A bug or an unexpected SDK error: tell the client instead of silently cutting the stream.
+        logger.exception("Unexpected error while streaming (conversation=%s)", pending.conversation_id)
+        log_turn(pending, status="internal_error")
+        yield sse("error", {"code": "internal_error", "message": "Something went wrong on the server."})
+        return
     finally:
         # Close the model stream even if the client disconnected (shielded from
         # cancellation), so we stop paying for text nobody will read.
