@@ -122,10 +122,17 @@ class ModelProvider(Protocol):
 ```
 - `ModelResponse` has text, the model that actually answered, input/output token counts, and `stop_reason` (`"max_tokens"` means the reply was cut off), so cost is logged the same way for every provider.
 - `stream` is a plain `def` that returns an async iterator. It yields `str` chunks, and its **last item is a `ModelResponse`** with the full text and token counts. The Anthropic adapter gets this from the SDK's final message.
-- Options: `max_tokens` is **4096** in normal mode and **150** in brief mode.
+- **Per-mode settings** (the `/chat` route passes these to the provider):
+
+  | Mode | `max_tokens` | `effort` | Why |
+  |---|---|---|---|
+  | `normal` | 16000 | `high` | Hard math/coding/projects need careful reasoning; long answers must not be cut off |
+  | `brief` | 2048 | `low` | Fast, short answers for voice/glasses; brevity comes from the prompt, the cap just leaves room for thinking |
+
+  `max_tokens` is a ceiling, not a cost: only tokens used are billed. On Claude Opus 5.5 **thinking is always on** and its tokens count toward `max_tokens`, so caps must leave room for it. `effort` is sent as `output_config.effort`.
 - **Refusals (Anthropic):** the model's safety classifiers can decline a request, returned as a normal reply with `stop_reason: "refusal"`. The adapter opts into server-side fallbacks (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`), so some declines are retried on another model automatically. A decline that isn't rescued raises `ProviderRefusalError` (with its category).
 - HTTP status mapping (Anthropic): 401/403 → auth · 402/429 → rate limit (incl. billing/spend limit) · 408/409/5xx/529 and network errors → unavailable · other 4xx (incl. 404 unknown model) → bad request.
-- Timeouts and retries use the SDK's built-in settings (`timeout=60s`, `max_retries=2`). No custom retry loop. Never retry once the first token has been sent.
+- Timeouts and retries use the SDK's built-in settings: connect timeout 10 s, read timeout 10 min (a long reasoned reply can take minutes; a shorter timeout would cut it off and the retry would bill it again), `max_retries=2`. No custom retry loop. Never retry once the first token has been sent.
 - `providers/errors.py` defines `ProviderError` and its subclasses `ProviderAuthError`, `ProviderRateLimitError`, `ProviderUnavailableError`, `ProviderBadRequestError`, `ProviderRefusalError` and `UnknownProviderError`. Adapters convert SDK exceptions into these. The API layer converts them into HTTP codes (before streaming) or an SSE `error` event (after).
 - **History window:** only the last **20 messages** of a conversation are sent to the model. Only the current turn's images are sent; older images become the text `[image omitted]`.
 
@@ -196,7 +203,9 @@ Decided 2026-09-30:
 - [x] **Images:** stored as BLOBs in SQLite (§7).
 - [x] **Failed/aborted turns:** save nothing (§5).
 - [x] **History window:** last 20 messages; older images omitted (§6).
-- [x] **`max_tokens`:** normal 4096, brief 150 (§6).
+- [x] **Model:** Claude Opus 5.5 (`claude-opus-5-5`, $4 / $20 per MTok) for the strongest math, coding, and invention. Changed from Sonnet 5.5 on 2026-09-30.
+- [x] **`max_tokens` and effort:** normal 16000 / `high`, brief 2048 / `low` (§6). Replaces normal 4096 / brief 150, which thinking tokens could exhaust.
+- [x] **Refusal fallbacks:** on (`fallbacks: "default"`, §6).
 - [x] **Titles:** first 60 characters of the first user message (§5).
 - [x] **Prompt loader and cost logging:** moved into Week 2.
 
