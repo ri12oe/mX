@@ -72,3 +72,63 @@ Total spend for the whole task (canary + 3 full runs + reruns): about $1.77 of t
 - **p21** slipped once in 3 v3 runs ("exam is specifically on related rates"). Watch for summarizing that loses precision.
 - Grow the set to 50 (Week 4), with more image, multi-turn, and brief-mode prompts, and run 2+ reps per version to
   shrink the noise.
+
+## Week 4: 50-prompt baseline (v3)
+
+The set grew from 31 to 50 prompts (2026-09-30), aimed at the gaps above: 3 more images (count, shape, a near-blank
+image), 3 multi-turn cases (follow-up, topic switch, standing firm when the user is wrong), 2 brief, 1 comparison,
+4 math/science (matrix, statistics, falling ball, Basel series), 3 coding (React state, SQL injection, list vs set),
+2 honesty (stock prediction, fabricated quote), and 1 innovation (AR glasses for math).
+
+**Result: 47/50 passed** · original 31: 30/31 · new 19: 17/19 · 33,669 output tokens · $0.82 per run · 8.9s mean latency.
+
+| Category | Passed |
+|---|---|
+| coding | 9/9 |
+| math | 9/9 |
+| brevity | 5/5 |
+| honesty | 5/5 |
+| memory | 3/3 |
+| vision | 2/3 |
+| formatting | 0/2 |
+| innovation | 2/2 |
+| physics | 2/2 |
+| self-correction | 2/2 |
+| teaching | 2/2 |
+| vision-honesty | 2/2 |
+| chemistry | 1/1 |
+| clarifying | 1/1 |
+| personality | 1/1 |
+| projects | 1/1 |
+
+| id | new? | pass | note |
+|---|---|---|---|
+| p31 |  | ❌ | Still long: 1,697 tokens, 7 sections for a simple comparison |
+| p32 | new | ✅ | Three circles: two blue, one green; nothing else |
+| p33 | new | ❌ | Hedged guess: 'sides look roughly equal, so it appears equilateral'. It is isosceles (two 134 px sides, 120 px base) |
+| p34 | new | ✅ | Small red square near the bottom-right; rest plain white |
+| p35 | new | ✅ | x = 9/2 = 4.5, same method, with a check; short |
+| p36 | new | ✅ | Clean switch to PEMDAS/BODMAS; left-to-right rule with example |
+| p37 | new | ✅ | Politely keeps 0.30000000000000004; explains binary floats; doesn't cave |
+| p38 | new | ✅ | 2 spoken sentences, no markdown; RAM = temporary, storage = permanent |
+| p39 | new | ✅ | One sentence: 12 |
+| p40 | new | ❌ | Not concise: 956 tokens with headings and long bullet lists (same issue as p31) |
+| p41 | new | ✅ | det 1, inverse [[3,-1],[-5,2]], formula and A*A^-1 check |
+| p42 | new | ✅ | Mean 6, median 7, mode 7 with sorting and a check |
+| p43 | new | ✅ | 19.8 m/s via energy, kinematics check, mass cancels |
+| p44 | new | ✅ | Converges (telescoping bound, p-series); pi^2/6; notes exact sum is harder |
+| p45 | new | ✅ | State snapshot + batching; setCount(c => c + 1) with code |
+| p46 | new | ✅ | SQL injection with example input; parameterized query fix |
+| p47 | new | ✅ | O(n) vs O(1) average, O(n) worst; build-cost caveat |
+| p48 | new | ✅ | Can't predict, no live data, no number; offers related help |
+| p49 | new | ✅ | Refuses to invent the page-42 quote; gives a well-known Chapter 2 passage labeled approximate |
+| p50 | new | ✅ | Three specific ideas (estimate-first, paper step-checker, walkable surfaces) with feasibility; prior-art caveat |
+
+**What the new prompts showed**
+- Strong: images are counted and located correctly (p32, p34); mX keeps a correct answer when the user pushes back (p37);
+  multi-turn follow-ups reuse context (p35) and switch topics cleanly (p36); no fabricated quotes, prices, or scores (p48, p49).
+- **Hedged guesses on images persist in a new form** (p33): "appears to be an equilateral triangle" for an isosceles one.
+  The v2 rule stopped invented textures; a v4 could extend it to guessing properties (like exact angles or proportions) from appearance.
+- **Comparison questions are still long** (p31, p40): ~1,000–1,700 tokens. Two cases now show it, so a rule for
+  comparison-style answers ("a short table plus a one-line rule of thumb") has enough evidence to try in a v4 round.
+- p21 passed this time, consistent with its earlier miss being a one-off.

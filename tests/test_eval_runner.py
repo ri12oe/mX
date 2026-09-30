@@ -19,7 +19,7 @@ PROMPT_FILE = settings.system_prompt_file
 def test_real_eval_set_loads_with_unique_ids_and_existing_images():
     cases = runner.load_cases()
     ids = [c.id for c in cases]
-    assert len(ids) == len(set(ids)) >= 30
+    assert len(ids) == len(set(ids)) >= 50
     for case in cases:
         assert case.prompt and case.expect
         for image in case.images:
