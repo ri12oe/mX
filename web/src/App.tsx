@@ -4,7 +4,8 @@ import { Composer } from "./components/Composer";
 import { LoginDialog } from "./components/LoginDialog";
 import { MessageView } from "./components/MessageView";
 import { Core, type CoreState } from "./components/Core";
-import { Sidebar } from "./components/Sidebar";
+import { HistoryPanel } from "./components/HistoryPanel";
+import { OrbitDial } from "./components/OrbitDial";
 import { StatusPanel, type SessionStats } from "./components/StatusPanel";
 import { loadMode, saveMode } from "./settings";
 import type { ChatEvent, ConversationSummary, Mode, StoredMessage, UiMessage, Usage } from "./types";
@@ -37,7 +38,7 @@ export default function App() {
   const [model, setModel] = useState<string | null>(null);
   const [lastUsage, setLastUsage] = useState<Usage | null>(null);
   const [session, setSession] = useState<SessionStats>({ replies: 0, costUsd: 0, unknownCost: false });
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -99,13 +100,13 @@ export default function App() {
     setActiveId(null);
     setMessages([]);
     setBanner(null);
-    setSidebarOpen(false);
+    setHistoryOpen(false);
   }
 
   async function openConversation(id: string) {
-    if (id === activeId) return setSidebarOpen(false);
+    if (id === activeId) return setHistoryOpen(false);
     stop();
-    setSidebarOpen(false);
+    setHistoryOpen(false);
     setBanner(null);
     try {
       const detail = await getConversation(id);
@@ -218,20 +219,17 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar
+      <OrbitDial
         conversations={conversations}
         activeId={activeId}
-        open={sidebarOpen}
         onSelect={(id) => void openConversation(id)}
         onNew={startNewChat}
-        onDelete={(c) => void removeConversation(c)}
-        onSignOut={() => void signOut()}
+        onOpenHistory={() => setHistoryOpen(true)}
       />
-      {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
 
       <main className="chat">
         <header className="topbar">
-          <button type="button" className="icon-button menu-button" onClick={() => setSidebarOpen(true)} aria-label="Open conversations">
+          <button type="button" className="icon-button menu-button" onClick={() => setHistoryOpen(true)} aria-label="Open conversations">
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
               <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
             </svg>
@@ -296,7 +294,19 @@ export default function App() {
         session={session}
         conversationCount={conversations.length}
         mode={mode}
+        onSignOut={() => void signOut()}
       />
+
+      {historyOpen && (
+        <HistoryPanel
+          conversations={conversations}
+          activeId={activeId}
+          onSelect={(id) => void openConversation(id)}
+          onNew={startNewChat}
+          onDelete={(c) => void removeConversation(c)}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
 
       {auth === "signed-out" && (
         <LoginDialog

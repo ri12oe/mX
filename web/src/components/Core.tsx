@@ -10,11 +10,11 @@ export const CORE_LABELS: Record<CoreState, string> = {
   error: "Fault",
 };
 
-/** SVG path for a circular arc from `start` to `end` degrees (0 = top, clockwise). */
-export function arc(r: number, start: number, end: number, c = 100): string {
+/** SVG path for a circular arc from `start` to `end` degrees (0 = top, clockwise), centered at (cx, cy). */
+export function arc(r: number, start: number, end: number, cx = 100, cy = cx): string {
   const point = (deg: number) => {
     const rad = ((deg - 90) * Math.PI) / 180;
-    return `${(c + r * Math.cos(rad)).toFixed(2)} ${(c + r * Math.sin(rad)).toFixed(2)}`;
+    return `${(cx + r * Math.cos(rad)).toFixed(2)} ${(cy + r * Math.sin(rad)).toFixed(2)}`;
   };
   const large = end - start > 180 ? 1 : 0;
   return `M ${point(start)} A ${r} ${r} 0 ${large} 1 ${point(end)}`;

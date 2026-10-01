@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { relativeTime } from "./components/Sidebar";
+import { relativeTime } from "./time";
 import { MAX_IMAGE_BYTES, checkImage } from "./images";
 import { escapeCurrency } from "./markdown";
 

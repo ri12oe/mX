@@ -23,14 +23,15 @@ For everyday use, `start-mx.ps1` in the project root builds the app (`npm run bu
 changed and the API serves it at http://localhost:8000.
 
 ## Features
-- **HUD design** (J.A.R.V.I.S.-inspired, dark only): an animated **mX core** shows standby / thinking / responding / fault, and a status panel shows a live clock, model, mode, the last reply's tokens and cost, and this session's spend. Wide screens show the status panel; medium screens move a mini core into the top bar; phones get the chat plus the core.
-- Password sign-in; the server sets an HttpOnly session cookie (30 days). **Sign out** is in the sidebar.
+- **HUD design** (J.A.R.V.I.S.-inspired, dark only): an animated **mX core** shows standby / thinking / responding / fault, and a floating status card shows a live clock, model, mode, the last reply's tokens and cost, and this session's spend. Wide screens show the card; medium screens move a mini core into the top bar; phones get the chat plus the core.
+- **Orbit dial** instead of a sidebar: "+ New" in the center, the 5 most recent chats on spokes, and **All chats** opens a searchable history panel (open, delete, start new). On phones the round button in the top bar opens it.
+- Password sign-in; the server sets an HttpOnly session cookie (30 days). **Sign out** is at the bottom of the status card.
 - Streaming replies (`fetch` + a stream reader; see `src/sse.ts`), with a **Stop** button. A stopped or failed reply is not saved.
 - Normal / Brief mode toggle.
 - Images: attach, paste, or drop up to 4 (JPEG, PNG, GIF, WebP, max 5 MB each).
 - Markdown, tables, code highlighting, and math (KaTeX) in replies. Raw HTML from the model is never rendered.
-- Conversation list: open, start new, delete. The model, tokens, and cost are shown under each live reply.
-- Light and dark themes follow your system setting; the layout works down to phone width.
+- The model, tokens, and cost are shown under each live reply.
+- Dark only; the layout works down to phone width.
 
 ## Scripts
 | Command | What it does |
@@ -47,6 +48,6 @@ changed and the API serves it at http://localhost:8000.
 | `src/api.ts` | API client (same-origin with the session cookie, typed errors, `login`/`logout`, `streamChat`) |
 | `src/sse.ts` | Server-Sent Events parser |
 | `src/App.tsx` | State and wiring: conversations, sending, streaming events |
-| `src/components/` | `Sidebar`, `MessageView`, `Composer`, `LoginDialog`, `Markdown`, `StoredImage` |
+| `src/components/` | `OrbitDial`, `HistoryPanel`, `Core`, `StatusPanel`, `MessageView`, `Composer`, `LoginDialog`, `Markdown`, `StoredImage` |
 | `src/markdown.ts` | Keeps `$` prices from being read as math (Pandoc's inline-math rule) |
-| `src/styles.css` | Design tokens and layout (light/dark) |
+| `src/styles.css` | Design tokens and the HUD layout |

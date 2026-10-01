@@ -15,10 +15,11 @@ interface Props {
   session: SessionStats;
   conversationCount: number;
   mode: Mode;
+  onSignOut: () => void;
 }
 
 /** Right-hand HUD: the core plus real readouts only (no decorative fake data). */
-export function StatusPanel({ coreState, model, lastUsage, session, conversationCount, mode }: Props) {
+export function StatusPanel({ coreState, model, lastUsage, session, conversationCount, mode, onSignOut }: Props) {
   return (
     <aside className="status-panel" aria-label="System status">
       <Core state={coreState} size={170} />
@@ -44,6 +45,12 @@ export function StatusPanel({ coreState, model, lastUsage, session, conversation
         <Row label="Spend" value={`${session.unknownCost ? "≥ " : ""}$${session.costUsd.toFixed(4)}`} mono />
         <Row label="Archive" value={`${conversationCount} chat${conversationCount === 1 ? "" : "s"}`} mono />
       </Readout>
+      <button type="button" className="signout-button" onClick={onSignOut}>
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+          <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M15 4h4v16h-4M10 16l4-4-4-4M14 12H4" />
+        </svg>
+        Sign out
+      </button>
     </aside>
   );
 }

@@ -57,6 +57,7 @@ describe("StatusPanel", () => {
     session: { replies: 0, costUsd: 0, unknownCost: false },
     conversationCount: 1,
     mode: "normal" as const,
+    onSignOut: () => {},
   };
 
   it("shows only real readouts", () => {
