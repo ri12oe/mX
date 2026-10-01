@@ -5,7 +5,7 @@ Read these before doing anything:
 2. `TASKS.md` — the current task list. Work on ONE task at a time.
 
 ## Rules
-- Stay inside Phase 1 scope (design.md §3). If a task needs something out of scope, stop and say so.
+- Stay inside Phase 2 scope (design.md §3). If a task needs something out of scope, stop and say so.
 - Python 3.11, FastAPI, type hints everywhere, small functions.
 - Never call a model provider SDK outside `providers/`. The API layer only uses the `ModelProvider` interface.
 - Prompts live in `prompts/` as files, never hardcoded strings.
