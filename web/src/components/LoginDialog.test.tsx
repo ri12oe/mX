@@ -2,7 +2,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LoginDialog } from "./LoginDialog";
-import { Sidebar } from "./Sidebar";
 
 afterEach(() => {
   cleanup();
@@ -48,34 +47,5 @@ describe("LoginDialog", () => {
     render(<LoginDialog onSignedIn={vi.fn()} />);
     signIn("whatever-password");
     await screen.findByText(/Can't reach mX/);
-  });
-});
-
-describe("Sidebar", () => {
-  const conversations = [
-    { id: "c1", title: "Integration by parts", created_at: "", updated_at: new Date().toISOString() },
-    { id: "c2", title: "React state", created_at: "", updated_at: new Date().toISOString() },
-  ];
-
-  it("lists conversations and wires select, new, delete, and sign out", () => {
-    const handlers = { onSelect: vi.fn(), onNew: vi.fn(), onDelete: vi.fn(), onSignOut: vi.fn() };
-    render(<Sidebar conversations={conversations} activeId="c2" open={false} {...handlers} />);
-
-    fireEvent.click(screen.getByText("Integration by parts"));
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
-    fireEvent.click(screen.getByRole("button", { name: 'Delete "React state"' }));
-    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
-
-    expect(handlers.onSelect).toHaveBeenCalledWith("c1");
-    expect(handlers.onNew).toHaveBeenCalled();
-    expect(handlers.onDelete).toHaveBeenCalledWith(conversations[1]);
-    expect(handlers.onSignOut).toHaveBeenCalled();
-    expect(screen.getByText("React state").closest(".conversation")?.className).toContain("active");
-    expect(screen.getAllByText("just now")).toHaveLength(2);
-  });
-
-  it("shows an empty state", () => {
-    render(<Sidebar conversations={[]} activeId={null} open={false} onSelect={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} onSignOut={vi.fn()} />);
-    expect(screen.getByText("No conversations yet.")).toBeTruthy();
   });
 });

@@ -3,9 +3,12 @@ import { deleteConversation, getConversation, isSignedOut, listConversations, lo
 import { Composer } from "./components/Composer";
 import { LoginDialog } from "./components/LoginDialog";
 import { MessageView } from "./components/MessageView";
-import { Sidebar } from "./components/Sidebar";
+import { Core, type CoreState } from "./components/Core";
+import { HistoryPanel } from "./components/HistoryPanel";
+import { OrbitDial } from "./components/OrbitDial";
+import { StatusPanel, type SessionStats } from "./components/StatusPanel";
 import { loadMode, saveMode } from "./settings";
-import type { ChatEvent, ConversationSummary, Mode, StoredMessage, UiMessage } from "./types";
+import type { ChatEvent, ConversationSummary, Mode, StoredMessage, UiMessage, Usage } from "./types";
 
 const SUGGESTIONS = [
   "Explain integration by parts with a worked example",
@@ -32,7 +35,10 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [model, setModel] = useState<string | null>(null);
+  const [lastUsage, setLastUsage] = useState<Usage | null>(null);
+  const [session, setSession] = useState<SessionStats>({ replies: 0, costUsd: 0, unknownCost: false });
+  const [historyOpen, setHistoryOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -48,7 +54,10 @@ export default function App() {
   // On load: are we already signed in (valid session cookie)?
   useEffect(() => {
     whoami()
-      .then(() => setAuth("signed-in"))
+      .then((info) => {
+        setModel(info.model);
+        setAuth("signed-in");
+      })
       .catch((err: unknown) => {
         if (isSignedOut(err)) setAuth("signed-out");
         else {
@@ -57,6 +66,13 @@ export default function App() {
         }
       });
   }, [handleError]);
+
+  // After signing in from the login screen, learn which model is answering (for the HUD).
+  useEffect(() => {
+    if (auth === "signed-in" && model === null) {
+      whoami().then((info) => setModel(info.model)).catch(() => {});
+    }
+  }, [auth, model]);
 
   const refreshList = useCallback(async () => {
     try {
@@ -84,13 +100,13 @@ export default function App() {
     setActiveId(null);
     setMessages([]);
     setBanner(null);
-    setSidebarOpen(false);
+    setHistoryOpen(false);
   }
 
   async function openConversation(id: string) {
-    if (id === activeId) return setSidebarOpen(false);
+    if (id === activeId) return setHistoryOpen(false);
     stop();
-    setSidebarOpen(false);
+    setHistoryOpen(false);
     setBanner(null);
     try {
       const detail = await getConversation(id);
@@ -162,6 +178,12 @@ export default function App() {
         case "done":
           update(() => ({ streaming: false, usage: event.usage, stopReason: event.stop_reason }));
           setActiveId(conversationId);
+          setLastUsage(event.usage);
+          setSession((s) => ({
+            replies: s.replies + 1,
+            costUsd: s.costUsd + (event.usage.cost_usd ?? 0),
+            unknownCost: s.unknownCost || event.usage.cost_usd === null,
+          }));
           void refreshList();
           break;
         case "error":
@@ -193,28 +215,40 @@ export default function App() {
   }
 
   const activeTitle = conversations.find((c) => c.id === activeId)?.title ?? "New chat";
+  const coreState = coreStateFor(messages, streaming);
 
   return (
     <div className="app">
-      <Sidebar
+      <OrbitDial
         conversations={conversations}
         activeId={activeId}
-        open={sidebarOpen}
         onSelect={(id) => void openConversation(id)}
         onNew={startNewChat}
-        onDelete={(c) => void removeConversation(c)}
-        onSignOut={() => void signOut()}
+        onOpenHistory={() => setHistoryOpen(true)}
       />
-      {sidebarOpen && <div className="scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
 
       <main className="chat">
         <header className="topbar">
-          <button type="button" className="icon-button menu-button" onClick={() => setSidebarOpen(true)} aria-label="Open conversations">
+          <button type="button" className="icon-button menu-button" onClick={() => setHistoryOpen(true)} aria-label="Open conversations">
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
               <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
             </svg>
           </button>
+          <div className="topbar-core">
+            <Core state={coreState} size={34} showLabel={false} />
+          </div>
+          {messages.length > 0 && (
+            <button type="button" className="back-button" onClick={startNewChat} aria-label="Back to home" title="Back to home">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M15 5l-7 7 7 7" />
+              </svg>
+              <span>Home</span>
+            </button>
+          )}
           <h1 className="topbar-title">{activeTitle}</h1>
+          <span className={`status-chip status-${coreState}`} aria-hidden="true">
+            {streaming ? "Live" : model ? "Online" : "Link"}
+          </span>
         </header>
 
         {banner && (
@@ -227,7 +261,7 @@ export default function App() {
         <div className="messages">
           {messages.length === 0 ? (
             <div className="welcome">
-              <div className="welcome-mark" aria-hidden="true">mX</div>
+              <Core state={coreState} size={220} showLabel={false} />
               <h2>How can I help you learn today?</h2>
               <p>Code, math, science, projects, and new ideas, explained step by step.</p>
               <div className="suggestions">
@@ -261,6 +295,27 @@ export default function App() {
         </div>
       </main>
 
+      <StatusPanel
+        coreState={coreState}
+        model={model}
+        lastUsage={lastUsage}
+        session={session}
+        conversationCount={conversations.length}
+        mode={mode}
+        onSignOut={() => void signOut()}
+      />
+
+      {historyOpen && (
+        <HistoryPanel
+          conversations={conversations}
+          activeId={activeId}
+          onSelect={(id) => void openConversation(id)}
+          onNew={startNewChat}
+          onDelete={(c) => void removeConversation(c)}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
+
       {auth === "signed-out" && (
         <LoginDialog
           onSignedIn={() => {
@@ -271,4 +326,12 @@ export default function App() {
       )}
     </div>
   );
+}
+
+/** What the core shows: thinking before the first words, responding while they stream, fault after an error. */
+export function coreStateFor(messages: UiMessage[], streaming: boolean): CoreState {
+  const last = messages[messages.length - 1];
+  if (streaming) return last?.role === "assistant" && last.content ? "streaming" : "thinking";
+  if (last?.role === "assistant" && last.error) return "error";
+  return "idle";
 }

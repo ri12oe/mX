@@ -141,7 +141,7 @@ describe("signing in", () => {
 });
 
 describe("chatting", () => {
-  it("sends a message, streams the reply, shows usage, and refreshes the sidebar", async () => {
+  it("sends a message, streams the reply, shows usage, and refreshes the dial", async () => {
     api.chat = (init) => {
       expect(JSON.parse(String(init.body))).toEqual({ message: "What is 4 times 3?", mode: "normal" });
       api.conversations = [{ id: "c1", title: "What is 4 times 3?", created_at: "", updated_at: new Date().toISOString() }];
@@ -156,8 +156,8 @@ describe("chatting", () => {
 
     await screen.findByText(/claude-opus-5-5 · 500 in \/ 40 out · \$0\.0028/);
     expect(screen.getByText("12").tagName).toBe("STRONG");
-    const sidebar = screen.getByRole("complementary", { name: "Conversations" });
-    await within(sidebar).findByText("What is 4 times 3?");
+    const dial = screen.getByRole("complementary", { name: "Conversations" });
+    await within(dial).findByText("What is 4 times 3?");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("What is 4 times 3?");
   });
 
@@ -230,10 +230,25 @@ describe("chatting", () => {
     await screen.findByText("Earlier question");
     expect(screen.getByText("answer").tagName).toBe("STRONG");
 
-    fireEvent.click(screen.getByRole("button", { name: 'Delete "Old chat"' }));
+    fireEvent.click(screen.getByRole("button", { name: "All chats" })); // delete lives in the history panel
+    fireEvent.click(within(screen.getByRole("dialog", { name: "All chats" })).getByRole("button", { name: 'Delete "Old chat"' }));
     await screen.findByText("How can I help you learn today?");
     expect(api.deleted).toEqual(["c1"]);
     await waitFor(() => expect(screen.queryByText("Old chat")).toBeNull());
+  });
+
+  it("goes back home from an open conversation", async () => {
+    api.conversations = [{ id: "c1", title: "Old chat", created_at: "", updated_at: new Date().toISOString() }];
+    render(<App />);
+    await screen.findByText("Old chat");
+    expect(screen.queryByRole("button", { name: "Back to home" })).toBeNull(); // nothing to leave yet
+
+    fireEvent.click(screen.getByText("Old chat"));
+    await screen.findByText("Earlier question");
+    fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
+    await screen.findByText("How can I help you learn today?");
+    expect(screen.queryByText("Earlier question")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("New chat");
   });
 
   it("fills the composer from a suggestion without sending", async () => {
