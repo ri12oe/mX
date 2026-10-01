@@ -400,7 +400,7 @@ Phase 2 additions:
 - **Migrations:** build a v1 DB by running `0001_initial.sql` and inserting sample conversations, messages, images, and usage rows; migrate; check every row survived, new columns have their defaults, `foreign_key_check` is clean, and the backup file exists and opens at v1. Also: fresh DB → target; DB at target → no backup; DB newer than code → refuses; a deliberately broken step rolls back, keeps the old version, and refuses to start. A test asserts that a migrated v1 DB and a fresh DB have the same schema (`sqlite_master`).
 - **FakeProvider** can script `ToolStep`s, call a client tool's `run`, fill cache/tool usage fields, and update a `UsageMeter` before raising.
 - **Adapter (mocked SDK raw events):** request body (system parts with `cache_control`, ≤ 4 breakpoints, top-level cache setting, tool list in a fixed order, `tool_choice: none` when tools are off); text + tool steps + citations from events; `pause_turn` continuation and its cap; client-tool round trip and its cap; no client tool run on `max_tokens`/`refusal`; usage summed across requests; meter updated before an error.
-- **Budget:** an injected clock; 79.99% → ok, 80% → warning, 100% → forced brief + tools off, override, month rollover at 00:00 UTC, NULL costs.
+- **Budget:** an injected clock; 79.99% → ok, 80% → warning, 100% → forced brief + tools off, override, month rollover at local midnight (tests inject a fixed UTC offset, plus one daylight-saving month), NULL costs.
 - **Chat:** failed and aborted turns write a usage row with no content; tool steps and citations saved atomically; SSE order (`meta`, `tool_start`, `tool_end`, `delta`, `memory_suggestion`, `done`); `propose_memory` never writes to the DB.
 - **Live (opt-in, each costs cents):** a second identical request shows `cache_read_tokens > 0`; one code-execution turn; one web-search turn with citations.
 - **Web (vitest):** tool step chips, sources, tools toggle, budget banner and override, cost panel, memory card and Memory page, (stretch) voice button with a mocked `SpeechRecognition`.
@@ -449,11 +449,12 @@ Decided 2026-10-01 (Phase 2; Rio):
 - [x] **Phase 2 plan:** 4–5 weeks, $20/month API budget, model stays Opus 5.5, glasses in Phase 3, local only. Order: W1 caching + cost + budget + migrations; W2–3 tools; W4 memory; W5 phone + voice (stretch) + review.
 - [x] **Memory: suggest, you approve.** mX proposes through a `propose_memory` client tool; the proposal becomes an SSE `memory_suggestion` and a Save/Dismiss card; nothing is stored without Save. A Memory page lists, edits, adds, and deletes memories. Saved memories form a learner profile in the system prompt. Local SQLite only (§18).
 - [x] **Budget guard: warn, then brief mode.** Warning at 80% of `MONTHLY_BUDGET_USD` (default 20); at 100%, brief mode with tools off until next month, with a per-message override. The Anthropic console spend limit remains the hard stop (§16).
+- [x] **Budget month = calendar month in local time** (the laptop's time zone); timestamps stay UTC in the DB, and the month bounds are converted (§16).
+- [x] **Console hard spend limit: $25/month,** set by Rio in the Anthropic console (§16).
 - [x] **Tools: mX decides, with a toggle.** On by default; the UI shows the steps and sources; a composer toggle turns them off. Tool fees are included in `cost_usd` (§17).
 - [x] **Phone: Tailscale on laptop and phone,** using `tailscale serve` for HTTPS to the `127.0.0.1`-bound server. Voice = browser Web Speech API in brief mode (§19).
 
 Decided 2026-10-01 (Phase 2; architect proposals, **confirm in review**):
-- [ ] **Budget month = calendar month in UTC.** It matches the stored UTC timestamps (simple, index-friendly queries). The UI shows the reset time in local time. (Alternative: local time; needs time-zone math on every query.)
 - [ ] **Migrations:** numbered SQL files + `PRAGMA user_version`, one transaction per step, backup before upgrading (§7.1). No migration library.
 - [ ] **Usage rows outlive conversations** (`ON DELETE SET NULL`) and are written for failed/aborted turns (§5, §7).
 - [ ] **Stepped history window** (steps of 10, max 20) so the prompt cache survives long chats (§6.1, §15).
@@ -511,7 +512,7 @@ Prompt layout, from most to least stable:
 ## 16. Cost page and budget guard (Phase 2, W1)
 ### Budget state
 `api/budget.py` computes, from `usage` rows of all statuses in the current month:
-- **Month = UTC calendar month** (`created_at >= YYYY-MM-01T00:00:00+00:00` and `<` the next month). `resets_at` = the next month's start in UTC.
+- **Month = calendar month in the laptop's local time zone** (Rio, 2026-10-01). mX runs on Rio's laptop, so "local" is the OS time zone (`datetime.now().astimezone()`); no time-zone setting. Timestamps stay stored in UTC: `budget.py` computes the local month's start and the next month's start, converts both to UTC, and queries `created_at >= start_utc AND created_at < next_utc`, so the query stays a simple indexed range. Daylight-saving changes are handled because the bounds are converted per month. `resets_at` = the next local month's start, as an ISO timestamp with its UTC offset (e.g. `2026-11-01T00:00:00-07:00`).
 - `spent_usd` = sum of `cost_usd`; rows with NULL cost count as $0 and are reported as `unknown_cost_replies`.
 - `state`: `ok` (< 80%), `warning` (≥ 80%), `brief` (≥ 100%). The 80% threshold is a constant, not a setting.
 
@@ -523,16 +524,16 @@ Prompt layout, from most to least stable:
 
 - The check happens before the model is called. One turn can push spend past 100% (one reply's cost is small relative to $20); the guard applies from the next turn. A runaway turn is bounded by `max_tokens`, `WEB_SEARCH_MAX_USES`, and the continuation caps (§6.1).
 - The forced settings are reported in `meta` (`mode`, `tools`, `budget.forced: true`) and recorded in `usage.mode`.
-- **The Anthropic console spend limit is the hard stop.** The guard only sees mX's own `/chat` spend, not eval runs, `try_mx.py`, or other projects using the same key. Recommended: set the console limit a little above the in-app budget (e.g. $25) so the in-app guard acts first. Rio picks the number.
+- **The Anthropic console spend limit is the hard stop: $25/month** (Rio, 2026-10-01). The guard only sees mX's own `/chat` spend, not eval runs, `try_mx.py`, or other projects using the same key; the console limit sits $5 above the in-app $20 so the in-app guard acts first. Rio sets it in the Anthropic console (Settings → Limits); mX never changes it. Note the console month may follow a different calendar/time zone than mX's local month.
 
 ### `GET /usage/budget`
-`{"state": "ok", "spent_usd": 4.12, "limit_usd": 20.0, "month": "2026-10", "resets_at": "2026-11-01T00:00:00+00:00"}`
+`{"state": "ok", "spent_usd": 4.12, "limit_usd": 20.0, "month": "2026-10", "resets_at": "2026-11-01T00:00:00-07:00"}`
 
 ### `GET /usage/summary?month=2026-10`
 ```json
 {
   "month": "2026-10", "limit_usd": 20.0, "spent_usd": 4.12, "state": "ok",
-  "resets_at": "2026-11-01T00:00:00+00:00",
+  "resets_at": "2026-11-01T00:00:00-07:00",
   "totals": {"replies": 210, "failed_turns": 3, "input_tokens": 0, "output_tokens": 0,
              "cache_read_tokens": 0, "cache_write_tokens": 0, "web_searches": 14,
              "code_runs": 9, "cache_hit_rate": 0.81, "unknown_cost_replies": 0},
@@ -540,7 +541,7 @@ Prompt layout, from most to least stable:
             "code_runs": 1, "cache_hit_rate": 0.77}]
 }
 ```
-Days are UTC dates with any usage, oldest first. `cache_write_tokens` = 5m + 1h. Only months with the format `YYYY-MM` are accepted.
+Days are **local** dates with any usage, oldest first: the month's rows are fetched by the UTC range above and grouped by local date in Python (not in SQL). `cache_write_tokens` = 5m + 1h. Only months with the format `YYYY-MM` are accepted.
 
 ### UI
 - **Status card** (existing HUD panel): adds `MONTH $4.12 / $20.00` with a thin bar colored by state, and `CACHE 81%` for the last reply. Session spend and last-reply tokens/cost stay. A "Cost" link opens the cost panel. The budget comes from `GET /usage/budget` on load and from `done.budget` after each reply.
@@ -611,8 +612,8 @@ Risks:
 7. **Schedule.** Tools are the largest unknown; voice is the planned slip.
 
 Open questions for Rio:
-1. Budget month in **UTC** (proposed) or local time?
-2. Console spend limit: what number (proposed: $25)?
+1. ~~Budget month in UTC or local time?~~ **Local time** (Rio, 2026-10-01).
+2. ~~Console spend limit?~~ **$25/month** (Rio, 2026-10-01).
 3. Should eval runs count toward the in-app budget? (Proposed: no; the runner has its own `--max-cost`.)
 4. Should dismissed memory suggestions be remembered so mX stops re-proposing them? That would store something without a yes (proposed: no for Phase 2).
 5. Keep memory proposals possible when tools are toggled off? (Proposed: no, simpler caching.)
