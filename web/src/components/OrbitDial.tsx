@@ -5,7 +5,7 @@ import type { ConversationSummary } from "../types";
 import { arc } from "./Core";
 
 export const MAX_SPOKES = 5;
-export const DIAL = { radius: 62, center: 76, spacing: 32, labelGap: 58 };
+export const DIAL = { radius: 62, center: 76, spacing: 32, labelGap: 40 };
 
 export interface SpokeGeometry {
   y: number; // label row

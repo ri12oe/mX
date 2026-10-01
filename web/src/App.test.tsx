@@ -237,6 +237,20 @@ describe("chatting", () => {
     await waitFor(() => expect(screen.queryByText("Old chat")).toBeNull());
   });
 
+  it("goes back home from an open conversation", async () => {
+    api.conversations = [{ id: "c1", title: "Old chat", created_at: "", updated_at: new Date().toISOString() }];
+    render(<App />);
+    await screen.findByText("Old chat");
+    expect(screen.queryByRole("button", { name: "Back to home" })).toBeNull(); // nothing to leave yet
+
+    fireEvent.click(screen.getByText("Old chat"));
+    await screen.findByText("Earlier question");
+    fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
+    await screen.findByText("How can I help you learn today?");
+    expect(screen.queryByText("Earlier question")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("New chat");
+  });
+
   it("fills the composer from a suggestion without sending", async () => {
     await renderSignedIn();
     const fetch = globalThis.fetch as ReturnType<typeof vi.fn>;

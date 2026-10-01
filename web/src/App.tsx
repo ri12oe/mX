@@ -237,6 +237,14 @@ export default function App() {
           <div className="topbar-core">
             <Core state={coreState} size={34} showLabel={false} />
           </div>
+          {messages.length > 0 && (
+            <button type="button" className="back-button" onClick={startNewChat} aria-label="Back to home" title="Back to home">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M15 5l-7 7 7 7" />
+              </svg>
+              <span>Home</span>
+            </button>
+          )}
           <h1 className="topbar-title">{activeTitle}</h1>
           <span className={`status-chip status-${coreState}`} aria-hidden="true">
             {streaming ? "Live" : model ? "Online" : "Link"}

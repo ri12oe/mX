@@ -87,11 +87,14 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .app {
   display: grid;
-  grid-template-columns: 370px minmax(0, 1fr) 300px;
+  grid-template-columns: 400px minmax(0, 1fr) 300px;
+  /* One row exactly the window's height, so long chats scroll inside .messages
+     instead of stretching the page (and being clipped). */
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
 }
-.chat { min-width: 0; display: flex; flex-direction: column; }
+.chat { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
 /* Floating status card: its own container, not a full-height column. */
 .status-panel {
@@ -156,8 +159,9 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 /* ---------- Orbit dial (conversations) ---------- */
 
-.orbit { padding: 22px 0 0 18px; }
-.orbit-stage { position: relative; width: 352px; }
+/* Starts below the top bar's line and keeps a gap on the right, so the dial never touches the chat. */
+.orbit { min-height: 0; overflow: hidden; padding: 80px 20px 0 18px; border-right: 1px solid var(--line); }
+.orbit-stage { position: relative; width: 100%; }
 .orbit-lines { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .orbit-ring { fill: rgba(0, 229, 255, 0.05); stroke: var(--cyan); stroke-width: 1.5; filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.45)); }
 .orbit-ticks { fill: none; stroke: var(--cyan); stroke-opacity: 0.45; stroke-width: 3; stroke-dasharray: 1 6; }
@@ -190,7 +194,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .spoke {
   position: absolute;
   transform: translateY(-50%);
-  max-width: 190px;
+  max-width: 166px;
   padding: 3px 10px;
   border: 1px solid transparent;
   border-left: 2px solid var(--line-strong);
@@ -249,6 +253,13 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   background: linear-gradient(90deg, rgba(0, 229, 255, 0.06), transparent 60%);
 }
 .topbar-core { display: none; }
+.back-button {
+  flex-shrink: 0; display: flex; align-items: center; gap: 4px;
+  padding: 5px 12px 5px 8px; border: 1px solid var(--line-strong); border-radius: 999px;
+  background: rgba(0, 229, 255, 0.06); color: var(--cyan-soft);
+  font-family: var(--font-hud); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase;
+}
+.back-button:hover { background: rgba(0, 229, 255, 0.14); box-shadow: var(--glow); }
 .topbar-title {
   flex: 1;
   min-width: 0;
@@ -496,11 +507,10 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 /* ---------- Responsive ---------- */
 
 @media (max-width: 1279px) {
-  .app { grid-template-columns: 340px minmax(0, 1fr); }
+  .app { grid-template-columns: 360px minmax(0, 1fr); }
   .status-panel { display: none; }
   .topbar-core { display: block; }
-  .orbit-stage { width: 322px; }
-  .spoke { max-width: 160px; }
+  .spoke { max-width: 126px; }
 }
 
 /* Narrow: the dial becomes a round button in the top bar that opens All chats. */
@@ -517,6 +527,9 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   .assistant-body { padding-left: 12px; }
   .history-tools { flex-direction: column; }
   .history-tools .button-primary { white-space: normal; }
+  .topbar { gap: 8px; }
+  .back-button { padding: 6px; }
+  .back-button span, .status-chip { display: none; }
 }
 
 /* Calm mode: no motion when the system asks for reduced motion. */
