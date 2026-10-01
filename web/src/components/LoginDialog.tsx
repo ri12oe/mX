@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { ApiError, login } from "../api";
+import { Core } from "./Core";
 
 /** Sign in with MX_PASSWORD; the server answers with an HttpOnly session cookie. */
 export function LoginDialog({ onSignedIn }: { onSignedIn: () => void }) {
@@ -25,7 +26,9 @@ export function LoginDialog({ onSignedIn }: { onSignedIn: () => void }) {
   return (
     <div className="dialog-backdrop" role="presentation">
       <form className="dialog" role="dialog" aria-modal="true" aria-labelledby="login-title" onSubmit={submit}>
-        <div className="welcome-mark dialog-mark" aria-hidden="true">mX</div>
+        <div className="dialog-core">
+          <Core state={checking ? "thinking" : error ? "error" : "idle"} size={96} showLabel={false} />
+        </div>
         <h2 id="login-title">Sign in to mX</h2>
         <p className="dialog-text">Enter your mX password. You'll stay signed in on this device for 30 days.</p>
         <label>

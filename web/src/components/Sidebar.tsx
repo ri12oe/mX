@@ -1,4 +1,5 @@
 import type { ConversationSummary } from "../types";
+import { Core } from "./Core";
 
 interface Props {
   conversations: ConversationSummary[];
@@ -14,8 +15,9 @@ export function Sidebar({ conversations, activeId, open, onSelect, onNew, onDele
   return (
     <aside className={`sidebar${open ? " open" : ""}`} aria-label="Conversations">
       <div className="brand">
-        <span className="brand-mark" aria-hidden="true">mX</span>
+        <Core state="idle" size={40} showLabel={false} />
         <span className="brand-name">mX</span>
+        <span className="brand-sub">Tutor system</span>
       </div>
 
       <button type="button" className="new-chat" onClick={onNew}>

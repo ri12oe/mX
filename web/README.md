@@ -23,6 +23,7 @@ For everyday use, `start-mx.ps1` in the project root builds the app (`npm run bu
 changed and the API serves it at http://localhost:8000.
 
 ## Features
+- **HUD design** (J.A.R.V.I.S.-inspired, dark only): an animated **mX core** shows standby / thinking / responding / fault, and a status panel shows a live clock, model, mode, the last reply's tokens and cost, and this session's spend. Wide screens show the status panel; medium screens move a mini core into the top bar; phones get the chat plus the core.
 - Password sign-in; the server sets an HttpOnly session cookie (30 days). **Sign out** is in the sidebar.
 - Streaming replies (`fetch` + a stream reader; see `src/sse.ts`), with a **Stop** button. A stopped or failed reply is not saved.
 - Normal / Brief mode toggle.
