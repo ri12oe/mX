@@ -9,15 +9,18 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 TITLE_MAX_CHARS = 60
 DEFAULT_TITLE = "New conversation"
 
 
+UsageStatus = Literal["ok", "failed", "aborted"]
+
+
 @dataclass(frozen=True)
 class UsageRecord:
-    """Token and cost numbers for one assistant reply."""
+    """Token and cost numbers for one turn (schema v2, design.md §7)."""
 
     provider: str
     model: str
@@ -26,6 +29,14 @@ class UsageRecord:
     output_tokens: int
     cost_usd: float | None
     latency_ms: int
+    mode: Literal["normal", "brief"] | None = None
+    status: UsageStatus = "ok"
+    cache_read_tokens: int = 0
+    cache_write_5m_tokens: int = 0
+    cache_write_1h_tokens: int = 0
+    web_searches: int = 0
+    code_runs: int = 0
+    requests: int = 1  # API requests in the turn (tool use can need several)
 
 
 @dataclass(frozen=True)
@@ -139,23 +150,29 @@ def _insert_image(
 
 
 def _insert_usage(
-    conn: sqlite3.Connection, message_id: str, usage: UsageRecord, created_at: str
+    conn: sqlite3.Connection, message_id: str | None, usage: UsageRecord, created_at: str
 ) -> None:
     conn.execute(
         """
-        INSERT INTO usage (id, message_id, provider, model, prompt_version,
-                           input_tokens, output_tokens, cost_usd, latency_ms, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO usage (id, message_id, provider, model, prompt_version, mode, status,
+                           input_tokens, output_tokens, cache_read_tokens,
+                           cache_write_5m_tokens, cache_write_1h_tokens, web_searches,
+                           code_runs, requests, cost_usd, latency_ms, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (new_id(), message_id, usage.provider, usage.model, usage.prompt_version,
-         usage.input_tokens, usage.output_tokens, usage.cost_usd, usage.latency_ms,
-         created_at),
+         usage.mode, usage.status, usage.input_tokens, usage.output_tokens,
+         usage.cache_read_tokens, usage.cache_write_5m_tokens, usage.cache_write_1h_tokens,
+         usage.web_searches, usage.code_runs, usage.requests, usage.cost_usd,
+         usage.latency_ms, created_at),
     )
 
 
 def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> bool:
-    """Delete a conversation and (via cascade) its messages, images, and usage.
+    """Delete a conversation and (via cascade) its messages and images.
 
+    Its usage rows are kept with message_id set to NULL, so deleting chats
+    never lowers the month's spend (design.md §7, §16).
     Returns False if it didn't exist.
     """
     with conn:
