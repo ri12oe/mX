@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from api import main
 from providers import ModelProvider, create_provider
-from providers.base import Message, ModelResponse
+from providers.base import Message, ModelResponse, SystemPart, UsageMeter
 from providers.errors import (
     ProviderAuthError,
     ProviderBadRequestError,
@@ -94,6 +94,29 @@ def test_fake_can_fail_mid_stream():
     with pytest.raises(ProviderRateLimitError):
         asyncio.run(consume())
     assert received == ["a", "b"]  # two chunks arrived, no final response
+
+
+def test_fake_fills_the_meter_like_the_real_adapter():
+    fake = FakeProvider(input_tokens=7, output_tokens=2, cache_read_tokens=90)
+    meter = UsageMeter()
+    asyncio.run(collect(fake.stream(HISTORY, "sys", meter=meter)))
+    assert (meter.requests, meter.input_tokens, meter.output_tokens, meter.cache_read_tokens) == (1, 7, 2, 90)
+    assert meter.model == "fake-model"
+
+
+def test_fake_meter_keeps_the_input_side_after_a_mid_stream_failure():
+    fake = FakeProvider(input_tokens=7, error=ProviderRateLimitError("x"), fail_after=1)
+    meter = UsageMeter()
+    with pytest.raises(ProviderRateLimitError):
+        asyncio.run(collect(fake.stream(HISTORY, "sys", meter=meter)))
+    assert (meter.requests, meter.input_tokens, meter.output_tokens) == (1, 7, 0)
+
+
+def test_system_parts_are_accepted():
+    fake = FakeProvider()
+    parts = [SystemPart("core", cache=True)]
+    asyncio.run(collect(fake.stream(HISTORY, parts)))
+    assert fake.calls[0].system == parts
 
 
 # --- Building and injecting the provider -----------------------------------

@@ -18,7 +18,7 @@ from providers.anthropic_provider import (
     AnthropicProvider,
     map_error,
 )
-from providers.base import ImageData, Message, ModelResponse
+from providers.base import ImageData, Message, ModelResponse, SystemPart, UsageMeter
 from providers.errors import (
     ProviderAuthError,
     ProviderBadRequestError,
@@ -75,8 +75,11 @@ class FakeMessages:
 class FakeStream:
     """Stands in for the SDK's async stream manager + stream.
 
-    Yields `chunks` from text_stream, optionally raising `error` when opened
-    (`fail_after=None`) or after `fail_after` chunks.
+    Iterating yields events like the SDK: `message_start`, a `text` event per
+    chunk, then `message_delta`. `current_message_snapshot` holds the running
+    usage: `start_usage` after message_start (default: the final usage with
+    no output yet), the final usage after message_delta. Optionally raises
+    `error` when opened (`fail_after=None`) or after `fail_after` chunks.
     """
 
     def __init__(
@@ -85,10 +88,13 @@ class FakeStream:
         final: BetaMessage,
         error: Exception | None = None,
         fail_after: int | None = None,
+        start_usage: dict[str, Any] | None = None,
     ) -> None:
         self.chunks, self.final, self.error, self.fail_after = chunks, final, error, fail_after
+        default_start = {**final.usage.model_dump(exclude_none=True), "output_tokens": 0}
+        self.start = BetaMessage.model_validate({**final.model_dump(), "usage": start_usage or default_start})
+        self.current_message_snapshot: BetaMessage | None = None
         self.closed = False
-        self.text_stream = self._text()
 
     async def __aenter__(self) -> "FakeStream":
         if self.error is not None and self.fail_after is None:
@@ -99,11 +105,15 @@ class FakeStream:
         self.closed = True
         return False
 
-    async def _text(self) -> AsyncIterator[str]:
+    async def __aiter__(self) -> AsyncIterator[SimpleNamespace]:
+        self.current_message_snapshot = self.start
+        yield SimpleNamespace(type="message_start")
         for i, chunk in enumerate(self.chunks):
             if self.error is not None and i == self.fail_after:
                 raise self.error
-            yield chunk
+            yield SimpleNamespace(type="text", text=chunk)
+        self.current_message_snapshot = self.final
+        yield SimpleNamespace(type="message_delta")
 
     async def get_final_message(self) -> BetaMessage:
         return self.final
@@ -410,6 +420,138 @@ def test_stream_rejects_unknown_options():
     provider, _ = streaming_provider(FakeStream(["x"], make_message()))
     with pytest.raises(TypeError):
         asyncio.run(collect(provider.stream(HISTORY, "sys", temperature=0.2)))
+
+
+# --- Prompt caching (design.md §15) ----------------------------------------
+
+PARTS = [SystemPart("Core prompt.", cache=True), SystemPart("Learner profile.", cache=True), SystemPart("Tail.")]
+CACHED_USAGE = {
+    "input_tokens": 20, "output_tokens": 7, "cache_read_input_tokens": 3000,
+    "cache_creation_input_tokens": 600,
+    "cache_creation": {"ephemeral_5m_input_tokens": 500, "ephemeral_1h_input_tokens": 100},
+    "server_tool_use": {"web_search_requests": 2, "web_fetch_requests": 0},
+}
+
+
+def test_plain_string_system_has_no_cache_markers():
+    provider, fake = provider_with(make_message())
+    asyncio.run(provider.generate(HISTORY, "You are mX."))
+    assert fake.kwargs["system"] == "You are mX."
+    assert "cache_control" not in fake.kwargs
+
+
+def test_marked_system_parts_get_breakpoints_in_order():
+    provider, fake = provider_with(make_message())
+    asyncio.run(provider.generate(HISTORY, PARTS))
+    assert fake.kwargs["system"] == [
+        {"type": "text", "text": "Core prompt.", "cache_control": {"type": "ephemeral", "ttl": "5m"}},
+        {"type": "text", "text": "Learner profile.", "cache_control": {"type": "ephemeral", "ttl": "5m"}},
+        {"type": "text", "text": "Tail."},
+    ]
+    assert "cache_control" not in fake.kwargs  # messages not cached unless asked
+
+
+def test_cache_messages_adds_top_level_automatic_caching():
+    provider, fake = streaming_provider(FakeStream(["ok"], make_message()))
+    asyncio.run(collect(provider.stream(HISTORY, PARTS, cache_messages=True)))
+    assert fake.kwargs["cache_control"] == {"type": "ephemeral", "ttl": "5m"}
+
+
+def test_one_hour_ttl_is_used_by_every_breakpoint():
+    """Longer TTLs must come first; using one TTL everywhere keeps that true (§15)."""
+    provider, fake = provider_with(make_message())
+    asyncio.run(provider.generate(HISTORY, PARTS, cache_messages=True, cache_ttl="1h"))
+    markers = [b["cache_control"] for b in fake.kwargs["system"] if "cache_control" in b]
+    markers.append(fake.kwargs["cache_control"])
+    assert markers == [{"type": "ephemeral", "ttl": "1h"}] * 3
+
+
+def test_rejects_unknown_ttl():
+    provider, _ = provider_with(make_message())
+    with pytest.raises(ValueError, match="cache_ttl"):
+        asyncio.run(provider.generate(HISTORY, PARTS, cache_ttl="1d"))
+
+
+def test_at_most_four_breakpoints():
+    four = [SystemPart(str(i), cache=True) for i in range(4)]
+    provider, fake = provider_with(make_message())
+    asyncio.run(provider.generate(HISTORY, four))  # 4 explicit: allowed
+    assert len(fake.kwargs["system"]) == 4
+    with pytest.raises(ValueError, match="breakpoints"):
+        asyncio.run(provider.generate(HISTORY, four, cache_messages=True))  # 4 + automatic = 5
+
+
+def test_response_reports_cache_and_tool_usage():
+    provider, _ = provider_with(make_message(usage=CACHED_USAGE))
+    reply = asyncio.run(provider.generate(HISTORY, PARTS))
+    assert (reply.input_tokens, reply.output_tokens) == (20, 7)
+    assert (reply.cache_read_tokens, reply.cache_write_5m_tokens, reply.cache_write_1h_tokens) == (3000, 500, 100)
+    assert (reply.web_searches, reply.code_runs, reply.requests) == (2, 0, 1)
+
+
+@pytest.mark.parametrize(("ttl", "expected"), [("5m", (400, 0)), ("1h", (0, 400))])
+def test_cache_writes_without_a_split_go_to_the_requests_ttl(ttl: str, expected: tuple[int, int]):
+    usage = {"input_tokens": 1, "output_tokens": 1, "cache_creation_input_tokens": 400}
+    provider, _ = provider_with(make_message(usage=usage))
+    reply = asyncio.run(provider.generate(HISTORY, PARTS, cache_ttl=ttl))
+    assert (reply.cache_write_5m_tokens, reply.cache_write_1h_tokens) == expected
+
+
+def test_reply_without_cache_fields_counts_zero():
+    reply = asyncio.run(provider_with(make_message())[0].generate(HISTORY, "sys"))
+    assert (reply.cache_read_tokens, reply.cache_write_5m_tokens, reply.web_searches) == (0, 0, 0)
+
+
+# --- Usage meter -----------------------------------------------------------
+
+
+def test_stream_fills_the_meter():
+    final = make_message(usage=CACHED_USAGE)
+    provider, _ = streaming_provider(FakeStream(["Hi"], final))
+    meter = UsageMeter()
+    asyncio.run(collect(provider.stream(HISTORY, PARTS, meter=meter)))
+    assert meter == UsageMeter(
+        input_tokens=20, output_tokens=7, cache_read_tokens=3000, cache_write_5m_tokens=500,
+        cache_write_1h_tokens=100, web_searches=2, code_runs=0, requests=1, model=MODEL,
+    )
+
+
+def test_meter_is_filled_before_a_mid_stream_error():
+    """The input side is known at message_start, so a failed turn's spend is still recorded."""
+    start = {"input_tokens": 20, "output_tokens": 0, "cache_read_input_tokens": 3000,
+             "cache_creation_input_tokens": 600,
+             "cache_creation": {"ephemeral_5m_input_tokens": 600, "ephemeral_1h_input_tokens": 0}}
+    fake_stream = FakeStream(["a", "b"], make_message(usage=CACHED_USAGE), start_usage=start,
+                             error=anthropic.APIConnectionError(request=REQUEST), fail_after=1)
+    provider, _ = streaming_provider(fake_stream)
+    meter = UsageMeter()
+    with pytest.raises(ProviderUnavailableError):
+        asyncio.run(collect(provider.stream(HISTORY, PARTS, meter=meter)))
+    assert (meter.requests, meter.input_tokens, meter.cache_read_tokens, meter.cache_write_5m_tokens) == (1, 20, 3000, 600)
+    assert meter.output_tokens == 0
+
+
+def test_meter_adds_to_what_the_turn_already_spent():
+    """A later request in the same turn (tool loop, week 2) adds to the totals."""
+    provider, _ = streaming_provider(FakeStream(["ok"], make_message()))  # 30 in, 4 out
+    meter = UsageMeter(input_tokens=100, output_tokens=50, requests=1)
+    asyncio.run(collect(provider.stream(HISTORY, "sys", meter=meter)))
+    assert (meter.input_tokens, meter.output_tokens, meter.requests) == (130, 54, 2)
+
+
+def test_generate_fills_the_meter():
+    provider, _ = provider_with(make_message(usage=CACHED_USAGE))
+    meter = UsageMeter()
+    asyncio.run(provider.generate(HISTORY, PARTS, meter=meter))
+    assert (meter.requests, meter.cache_read_tokens, meter.model) == (1, 3000, MODEL)
+
+
+def test_failed_generate_leaves_the_meter_empty():
+    provider, _ = provider_with(status_error(529))
+    meter = UsageMeter()
+    with pytest.raises(ProviderUnavailableError):
+        asyncio.run(provider.generate(HISTORY, "sys", meter=meter))
+    assert meter == UsageMeter()
 
 
 def test_non_http_sdk_errors_map_to_the_base_error():
