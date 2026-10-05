@@ -103,6 +103,23 @@ def test_second_turn_keeps_title_and_bumps_updated_at(conn: sqlite3.Connection):
     assert len(convo["messages"]) == 4
 
 
+def test_save_turn_stores_v2_usage_fields(conn: sqlite3.Connection):
+    usage = make_usage(mode="brief", cache_read_tokens=900, cache_write_5m_tokens=300,
+                       cache_write_1h_tokens=7, web_searches=2, code_runs=1, requests=3)
+    db.save_turn(conn, db.Turn(**{**make_turn("c1").__dict__, "usage": usage}))
+    row = conn.execute(
+        "SELECT mode, status, cache_read_tokens, cache_write_5m_tokens, cache_write_1h_tokens,"
+        " web_searches, code_runs, requests FROM usage"
+    ).fetchone()
+    assert tuple(row) == ("brief", "ok", 900, 300, 7, 2, 1, 3)
+
+
+def test_save_turn_defaults_v2_usage_fields(conn: sqlite3.Connection):
+    db.save_turn(conn, make_turn("c1"))
+    row = conn.execute("SELECT mode, status, cache_read_tokens, requests FROM usage").fetchone()
+    assert tuple(row) == (None, "ok", 0, 1)
+
+
 def test_save_turn_allows_unknown_cost(conn: sqlite3.Connection):
     turn = db.Turn(**{**make_turn("c1").__dict__, "usage": make_usage(cost_usd=None)})
     db.save_turn(conn, turn)
@@ -153,7 +170,7 @@ def test_messages_with_same_timestamp_keep_insert_order(conn: sqlite3.Connection
 # --- Delete + cascade ------------------------------------------------------
 
 
-def test_delete_cascades_to_messages_images_and_usage(conn: sqlite3.Connection):
+def test_delete_cascades_to_messages_and_images_but_keeps_usage(conn: sqlite3.Connection):
     turn = make_turn("c1")
     db.save_turn(conn, turn)
     with conn:
@@ -168,7 +185,10 @@ def test_delete_cascades_to_messages_images_and_usage(conn: sqlite3.Connection):
     assert not db.conversation_exists(conn, "c1")
     assert count(conn, "images") == 0
     assert count(conn, "messages") == 2  # only c2's turn
-    assert count(conn, "usage") == 1
+    # Spend outlives the chat (design.md §16): c1's row stays, unlinked.
+    assert count(conn, "usage") == 2
+    unlinked = conn.execute("SELECT COUNT(*) FROM usage WHERE message_id IS NULL").fetchone()[0]
+    assert unlinked == 1
 
 
 def test_delete_unknown_conversation_returns_false(conn: sqlite3.Connection):

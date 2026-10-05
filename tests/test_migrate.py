@@ -38,23 +38,32 @@ CREATE INDEX idx_messages_conversation ON messages (conversation_id, created_at)
 """
 
 
-def migrations_dir(tmp_path: Path, **extra: str) -> Path:
+def migrations_dir(tmp_path: Path, name: str = "migrations", **extra: str) -> Path:
     """The real 0001 plus extra steps, e.g. migrations_dir(tmp, **{"0002_x": "SQL"})."""
-    directory = tmp_path / "migrations"
+    directory = tmp_path / name
     directory.mkdir()
     shutil.copy(MIGRATIONS_DIR / "0001_initial.sql", directory)
-    for name, sql in extra.items():
-        (directory / f"{name}.sql").write_text(sql, encoding="utf-8")
+    for step, sql in extra.items():
+        (directory / f"{step}.sql").write_text(sql, encoding="utf-8")
     return directory
 
 
 def v1_database_with_data(path: Path) -> None:
-    """A Phase 1 database (schema v1) with one saved turn and an image."""
-    migrate(path)
+    """A Phase 1 database (schema v1 only) with one turn, an image, and its usage row.
+
+    Rows are inserted with v1-shaped SQL, exactly as Phase 1 code wrote them.
+    """
+    migrate(path, migrations_dir(path.parent, name="v1-only"))
     conn = db.connect(path)
-    usage = db.UsageRecord("anthropic", "claude-opus-5-5", "mx_system_v3", 100, 50, 0.0014, 900)
-    image = db.NewImage(db.new_id(), "image/png", b"\x89PNG fake")
-    db.save_turn(conn, db.Turn("c1", "u1", "Hello", T0, "a1", "Hi there", usage, (image,)))
+    with conn:
+        conn.execute("INSERT INTO conversations VALUES ('c1', 'Hello', ?, ?)", (T0, T0))
+        conn.execute("INSERT INTO messages VALUES ('u1', 'c1', 'user', 'Hello', '[\"i1\"]', ?)", (T0,))
+        conn.execute("INSERT INTO messages VALUES ('a1', 'c1', 'assistant', 'Hi there', '[]', ?)", (T0,))
+        conn.execute("INSERT INTO images VALUES ('i1', 'u1', 'image/png', ?, ?)", (b"\x89PNG fake", T0))
+        conn.execute(
+            "INSERT INTO usage VALUES ('g1', 'a1', 'anthropic', 'claude-opus-5-5', 'mx_system_v3',"
+            " 100, 50, 0.0014, 900, ?)", (T0,),
+        )
     conn.close()
 
 
@@ -113,10 +122,12 @@ def test_fresh_database_runs_all_steps_in_order(tmp_path: Path):
 def test_current_database_is_left_alone(tmp_path: Path):
     path = tmp_path / "mx.db"
     v1_database_with_data(path)
+    migrate(path)  # up to date now (makes one backup)
+    backups = list((tmp_path / "backups").iterdir())
     before = counts(path)
-    assert migrate(path) is None  # Rio's Phase 1 database: already at v1
+    assert migrate(path) is None
     assert counts(path) == before
-    assert not (tmp_path / "backups").exists()
+    assert list((tmp_path / "backups").iterdir()) == backups  # no new backup
 
 
 def test_refuses_a_database_from_newer_code(tmp_path: Path):
@@ -218,6 +229,77 @@ def test_never_overwrites_an_existing_backup(tmp_path: Path):
         migrate(path, directory, now=NOW)
     assert existing.read_bytes() == b"older backup"
     assert version(path) == 1
+
+
+# --- 0002: usage v2 --------------------------------------------------------
+
+
+def schema(path: Path) -> list[tuple[str, str, str]]:
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute(
+            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def test_usage_v2_keeps_every_phase1_row_and_sets_defaults(tmp_path: Path):
+    path = tmp_path / "mx.db"
+    v1_database_with_data(path)
+    before = counts(path)
+
+    backup = migrate(path, now=NOW)
+
+    assert version(path) == TARGET_VERSION >= 2
+    assert counts(path) == before
+    conn = db.connect(path)
+    row = dict(conn.execute("SELECT * FROM usage").fetchone())
+    assert row == {
+        "id": "g1", "message_id": "a1", "provider": "anthropic", "model": "claude-opus-5-5",
+        "prompt_version": "mx_system_v3", "mode": None, "status": "ok",
+        "input_tokens": 100, "output_tokens": 50, "cache_read_tokens": 0,
+        "cache_write_5m_tokens": 0, "cache_write_1h_tokens": 0, "web_searches": 0,
+        "code_runs": 0, "requests": 1, "cost_usd": 0.0014, "latency_ms": 900, "created_at": T0,
+    }
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    indexes = {r[1] for r in conn.execute("PRAGMA index_list(usage)")}
+    assert {"idx_usage_message", "idx_usage_created_at"} <= indexes
+    conn.close()
+
+    assert backup is not None and version(backup) == 1
+    assert counts(backup) == before
+
+
+def test_usage_v2_deleting_a_chat_keeps_its_spend(tmp_path: Path):
+    path = tmp_path / "mx.db"
+    v1_database_with_data(path)
+    migrate(path)
+    conn = db.connect(path)
+    assert db.delete_conversation(conn, "c1")
+    rows = [tuple(r) for r in conn.execute("SELECT message_id, cost_usd FROM usage")]
+    assert rows == [(None, 0.0014)]
+    assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    conn.close()
+
+
+def test_usage_v2_migrated_and_fresh_schemas_match(tmp_path: Path):
+    migrated, fresh = tmp_path / "migrated.db", tmp_path / "fresh.db"
+    v1_database_with_data(migrated)
+    migrate(migrated)
+    migrate(fresh)
+    assert schema(migrated) == schema(fresh)
+
+
+@pytest.mark.parametrize(("column", "value"), [("status", "maybe"), ("mode", "loud")])
+def test_usage_v2_rejects_unknown_status_and_mode(conn: sqlite3.Connection, column: str, value: str):
+    with pytest.raises(sqlite3.IntegrityError):
+        with conn:
+            conn.execute(
+                f"INSERT INTO usage (id, provider, model, prompt_version, {column},"
+                " input_tokens, output_tokens, latency_ms, created_at)"
+                " VALUES ('x', 'p', 'm', 'v', ?, 0, 0, 0, ?)", (value, T0),
+            )
 
 
 # --- Loading migration files -----------------------------------------------

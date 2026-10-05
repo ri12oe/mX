@@ -117,7 +117,10 @@ def test_delete_removes_conversation_and_its_rows(client: TestClient, conn: sqli
 
     assert client.get("/conversations/c1", headers=HEADERS).status_code == 404
     assert [c["id"] for c in client.get("/conversations", headers=HEADERS).json()] == ["keep"]
-    assert count(conn, "messages") == 2 and count(conn, "usage") == 1  # only "keep" remains
+    assert count(conn, "messages") == 2  # only "keep" remains
+    # Usage rows outlive the chat, unlinked, so the month's spend can't drop (design.md §16).
+    assert count(conn, "usage") == 2
+    assert conn.execute("SELECT COUNT(*) FROM usage WHERE message_id IS NULL").fetchone()[0] == 1
 
 
 def test_delete_unknown_is_404(client: TestClient):
