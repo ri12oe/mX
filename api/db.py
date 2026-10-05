@@ -11,8 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
-SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 TITLE_MAX_CHARS = 60
 DEFAULT_TITLE = "New conversation"
 
@@ -87,21 +85,7 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def init_db(db_path: str | Path) -> None:
-    """Create the database file and tables if missing. Safe to call repeatedly."""
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = connect(db_path)
-    try:
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version > SCHEMA_VERSION:
-            raise SchemaVersionError(
-                f"Database schema v{version} is newer than this code (v{SCHEMA_VERSION})."
-            )
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    finally:
-        conn.close()
+# Creating and upgrading the schema lives in api/migrate.py (design.md §7.1).
 
 
 # --- Writes ----------------------------------------------------------------

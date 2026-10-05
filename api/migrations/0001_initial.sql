@@ -1,6 +1,6 @@
--- mX database schema (design.md §7). Applied at startup; safe to run repeatedly.
+-- Migration 1: the Phase 1 schema (design.md §7), moved from api/schema.sql.
 -- IDs are UUID4 text. Timestamps are ISO-8601 UTC text.
--- When changing this file, bump SCHEMA_VERSION in api/db.py.
+-- Never edit a migration after it ships; add a new NNNN_name.sql instead (design.md §7.1).
 
 CREATE TABLE IF NOT EXISTS conversations (
     id          TEXT PRIMARY KEY,

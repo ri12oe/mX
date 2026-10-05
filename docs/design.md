@@ -303,8 +303,8 @@ Rio's existing `data/mx.db` (schema v1) must survive every upgrade.
 - `migrate(db_path)` runs at startup (replacing `init_db`):
   1. Open the DB and read `PRAGMA user_version`. If it is **higher** than `TARGET_VERSION`, refuse to start (`SchemaVersionError`, as in Phase 1).
   2. If it equals the target, do nothing.
-  3. If the DB **has data and is behind**, first **back it up** with the stdlib online-backup API (`sqlite3.Connection.backup`, safe with WAL) to `<DB dir>/backups/mx-v<old>-<UTC timestamp>.db`. If the backup fails, refuse to start. Backups are never deleted automatically.
-  4. Apply each missing step **in order, one transaction per step**, with `PRAGMA user_version = N` set inside the same transaction. Table rebuilds turn foreign keys off for the step (`PRAGMA foreign_keys=OFF` must be set outside the transaction) and run `PRAGMA foreign_key_check` before committing. On any error: roll back that step, log which step failed, and refuse to start. The DB stays at the last good version and the backup is untouched.
+  3. If the DB **has data and is behind** (version ≥ 1), first **back it up** with the stdlib online-backup API (`sqlite3.Connection.backup`, safe with WAL) to `<DB dir>/backups/mx-v<old>-<UTC timestamp>.db`. If the backup fails, refuse to start. Backups are never deleted automatically.
+  4. Apply each missing step **in order, one transaction per step**, with `PRAGMA user_version = N` set inside the same transaction. Foreign keys are turned off for **every** step (`PRAGMA foreign_keys=OFF` must be set outside the transaction), so any step may rebuild a table, and `PRAGMA foreign_key_check` must come back empty before committing. On any error: roll back that step, log which step failed, and refuse to start. The DB stays at the last good version and the backup is untouched.
   5. A brand-new DB (version 0, no tables) runs all steps and skips the backup.
 - Logging: one line per step (`migrated v1 → v2 in 35 ms`) and the backup path. No content.
 - A DB at version 0 **with** tables is not expected (Phase 1 always set version 1). Refuse to start with a clear message rather than guess.
