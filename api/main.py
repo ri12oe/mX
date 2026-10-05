@@ -12,13 +12,13 @@ from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from api import db
 from api.auth import router as auth_router
 from api.chat import router as chat_router
 from api.config import settings
 from api.conversations import router as conversations_router
 from api.deps import get_db, get_provider, require_auth
 from api.images import router as images_router
+from api.migrate import migrate
 
 __all__ = ["app", "get_db", "get_provider", "require_auth"]
 
@@ -41,9 +41,9 @@ DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """On startup: set up logging, then create the database and tables if needed."""
+    """On startup: set up logging, then create or upgrade the database (backing it up first)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    db.init_db(settings.db_path)
+    migrate(settings.db_path)
     yield
 
 

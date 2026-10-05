@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from api import db
 from api.config import settings
 from api.main import app, get_db
+from api.migrate import TARGET_VERSION, migrate
 
 T0 = "2026-10-01T10:00:00.000000+00:00"
 T1 = "2026-10-01T10:00:05.000000+00:00"
@@ -39,42 +40,18 @@ def count(conn: sqlite3.Connection, table: str) -> int:
 # --- Setup -----------------------------------------------------------------
 
 
-def test_init_creates_all_tables(conn: sqlite3.Connection):
+def test_setup_creates_all_tables(conn: sqlite3.Connection):
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"conversations", "messages", "images", "usage"} <= names
 
 
-def test_init_sets_version_wal_and_foreign_keys(conn: sqlite3.Connection):
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+def test_setup_sets_version_wal_and_foreign_keys(conn: sqlite3.Connection):
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == TARGET_VERSION
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
-def test_init_is_safe_to_run_twice_and_keeps_data(tmp_path: Path):
-    path = tmp_path / "twice.db"
-    db.init_db(path)
-    c = db.connect(path)
-    db.save_turn(c, make_turn("c1"))
-    c.close()
-    db.init_db(path)
-    c = db.connect(path)
-    assert db.conversation_exists(c, "c1")
-    c.close()
-
-
-def test_init_creates_missing_parent_folder(tmp_path: Path):
-    path = tmp_path / "nested" / "data" / "mx.db"
-    db.init_db(path)
-    assert path.is_file()
-
-
-def test_init_refuses_newer_schema(tmp_path: Path):
-    path = tmp_path / "future.db"
-    c = sqlite3.connect(path)
-    c.execute(f"PRAGMA user_version = {db.SCHEMA_VERSION + 1}")
-    c.close()
-    with pytest.raises(db.SchemaVersionError):
-        db.init_db(path)
+# Upgrades, backups, and refusing bad databases are tested in tests/test_migrate.py.
 
 
 # --- Titles ----------------------------------------------------------------
@@ -218,7 +195,7 @@ def test_app_startup_creates_database():
 
 
 def test_get_db_yields_working_connection_and_closes_it():
-    db.init_db(settings.db_path)
+    migrate(settings.db_path)
     gen = get_db()
     c = next(gen)
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1

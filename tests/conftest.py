@@ -25,9 +25,10 @@ os.environ["DB_PATH"] = str(TEST_DB_DIR / "app.db")
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     """A fresh, fully set-up database for one test."""
     from api import db
+    from api.migrate import migrate
 
     path = tmp_path / "test.db"
-    db.init_db(path)
+    migrate(path)
     connection = db.connect(path)
     yield connection
     connection.close()
