@@ -338,28 +338,31 @@ Phase 2 prompt files (same loader rules: header comment stripped, `str.replace` 
 | `prompts/tools/propose_memory_result.md` | The fixed text returned to the model after a proposal |
 
 ## 9. Pricing and cost
-`api/pricing.py` holds a dict `{model_id: (input_usd_per_million_tokens, output_usd_per_million_tokens)}`.
+Phase 1: `api/pricing.py` held a dict `{model_id: (input_usd_per_million_tokens, output_usd_per_million_tokens)}` (Phase 2 replaces it, §9.1).
 Filled in 2026-09-30 for Opus 5.5 plus the Opus/Sonnet models that refusal fallbacks can route to; verify against Anthropic's pricing page when adding or changing a model. Cost is `in_tokens × in_price / 1e6 + out_tokens × out_price / 1e6`.
 For a model missing from the table, `cost_usd` is NULL and a warning is logged.
 
 ### 9.1 Phase 2 pricing (W1, tool fees W2–3)
-Prices become a small record per model: `input`, `output`, `cache_write_5m`, `cache_write_1h`, `cache_read` (USD per MTok), plus a separate table of per-use tool fees.
+`api/pricing.py` (task 3, done): `PRICES` maps each model to a `ModelPrice(input, output, cache_write_5m, cache_write_1h, cache_read)` in USD per MTok, plus the per-use fees `WEB_SEARCH_FEE_USD` and `CODE_RUN_FEE_USD`. `cost_usd(model, input, output, *, cache_read_tokens, cache_write_5m_tokens, cache_write_1h_tokens, web_searches, code_runs)` prices one turn.
 
-| Item | Opus 5.5 (`claude-opus-5-5`) | Source |
+**Verified 2026-10-05** against Anthropic's pricing page (`platform.claude.com/docs/en/about-claude/pricing`):
+
+| Model | Input | 5m cache write | 1h cache write | Cache read | Output |
+|---|---|---|---|---|---|
+| Opus 5.5 (`claude-opus-5-5`, primary) | $4 | $5 | $8 | $0.20 (0.05×) | $20 |
+| Opus 5, Opus 4.8 (refusal fallbacks) | $5 | $6.25 | $10 | $0.50 | $25 |
+| Sonnet 5.5, Sonnet 5 | $2 | $2.50 | $4 | $0.20 | $10 |
+
+| Tool | Fee | Notes |
 |---|---|---|
-| Input (uncached) | $4.00 / MTok | Phase 1 table; `shared/models.md` |
-| Output (incl. thinking) | $20.00 / MTok | same |
-| Cache write, 5-min TTL | $5.00 / MTok (1.25×) | Opus 5.5 migration notes in the Claude API reference |
-| Cache write, 1-hour TTL | $8.00 / MTok (2×) | same |
-| Cache read | $0.20 / MTok (0.05×) | same |
-| Web search | $10 per 1,000 searches = **$0.01 per search** | Stated in the reference only as Managed Agents list cost. **VERIFY for the Messages API** |
-| Code execution | **$0** recorded. 1,550 free container-hours per month per organization, then $0.05/hour; free when used with web search/fetch | `shared/tool-use-concepts.md`. mX's use stays far below the free hours. **VERIFY** before relying on it |
+| Web search | **$0.01 per search** ($10 per 1,000) | Messages API price. Searches that error are not billed |
+| Code execution | **$0** | Free when the request includes `web_search_20260209` or later, which mX's tool requests always do. Otherwise 1,550 free hours/month per organization, then $0.05/hour |
 
-- Fallback models (Opus 5, Opus 4.8, Sonnet 5.5, Sonnet 5) keep their Phase 1 input/output prices. Their cache prices use the general rule (write 1.25× / 2×, read 0.1×): **VERIFY** per model.
+A test checks every row against Anthropic's multipliers (writes 1.25× / 2× input; reads 0.1×, or 0.05× on Opus 5.5), so a typo fails CI.
 - Cost of one turn (summed over all its API requests):
   `(input × p_in + cache_write_5m × p_w5 + cache_write_1h × p_w1 + cache_read × p_r + output × p_out) / 1e6 + web_searches × fee_search + code_runs × fee_code`.
 - `input_tokens` means **uncached input only**, as the API reports it. Total prompt size = input + cache writes + cache reads.
-- The web search count comes from the response's server-tool usage field (VERIFY the field name, e.g. `usage.server_tool_use.web_search_requests`). Fallback: count `server_tool_use` blocks named `web_search`.
+- The web search count comes from `usage.server_tool_use.web_search_requests`, and code runs from `usage.server_tool_use.code_execution_requests` (field names verified 2026-10-05 on the pricing page). Fallback: count `server_tool_use` blocks by name.
 - Web search results enter the context as input tokens, so a search turn costs much more than its $0.01 fee. Rough estimate (VERIFY with real data on the cost page): a plain cached normal reply ≈ $0.01–0.02; a turn with 1–3 searches ≈ $0.05–0.20. $20/month ≈ 1,000+ plain replies or ~150–300 search-heavy ones.
 
 ## 10. Config, security, and logging
@@ -606,7 +609,7 @@ Risks:
 1. **Budget.** Search-heavy days can cost $1+. Mitigations: the guard, the cost page, `WEB_SEARCH_MAX_USES`, caching. Hard stop: the console limit.
 2. **Cache misses.** Reply generation plus reading time often exceeds 5 minutes. Measured on the cost page; `1h` TTL is the switch.
 3. **Prompt injection via search results.** Mitigated (§10.1), not eliminated. The approval gate means the worst outcome is a misleading answer, not a stored memory or a local action.
-4. **API features in beta or unverified** (server-side fallbacks with tools, `tool_choice: none` with server tools, version strings, usage field names). Each is a VERIFY item; tasks check them with a mocked test first and one opt-in live call.
+4. **API features in beta or unverified** (server-side fallbacks with tools, `tool_choice: none` with server tools, version strings; prices and usage field names were verified 2026-10-05). Each is a VERIFY item; tasks check them with a mocked test first and one opt-in live call.
 5. **Tool turns are slower** (several requests per turn). Heartbeats keep the stream alive; steps show progress.
 6. **Migrations touch Rio's real data.** Backup first, one transaction per step, refuse to start on failure.
 7. **Schedule.** Tools are the largest unknown; voice is the planned slip.
