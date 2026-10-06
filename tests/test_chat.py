@@ -110,21 +110,37 @@ def test_turn_is_saved_with_usage(client: TestClient, conn: sqlite3.Connection):
     assert usage["latency_ms"] >= 0
 
 
+CACHE_OPTS = {"cache_messages": True, "cache_ttl": "5m"}
+
+
+def system_text(call: Any) -> str:
+    """The system prompt is one cached part (design.md §15)."""
+    assert len(call.system) == 1 and call.system[0].cache
+    return call.system[0].text
+
+
 def test_provider_gets_system_prompt_and_normal_mode_options(client: TestClient, fake: FakeProvider):
     post_chat(client)
     call = fake.calls[0]
     assert call.method == "stream"
-    assert call.system.startswith("You are mX") and "Mode: normal" in call.system
-    assert "<!--" not in call.system
-    assert call.opts == {"max_tokens": 16000, "effort": "high"}
+    text = system_text(call)
+    assert text.startswith("You are mX") and "Mode: normal" in text
+    assert "<!--" not in text
+    assert call.opts == {"max_tokens": 16000, "effort": "high", **CACHE_OPTS}
     assert [(m.role, m.content) for m in call.messages] == [("user", "What is 4 times 3?")]
 
 
 def test_brief_mode_uses_brief_prompt_and_options(client: TestClient, fake: FakeProvider):
     post_chat(client, mode="brief")
     call = fake.calls[0]
-    assert "Mode: brief" in call.system
-    assert call.opts == {"max_tokens": 2048, "effort": "low"}
+    assert "Mode: brief" in system_text(call)
+    assert call.opts == {"max_tokens": 2048, "effort": "low", **CACHE_OPTS}
+
+
+def test_cache_ttl_comes_from_settings(client: TestClient, fake: FakeProvider, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "cache_ttl", "1h")
+    post_chat(client)
+    assert fake.calls[0].opts["cache_ttl"] == "1h"
 
 
 def test_follow_up_sends_history_and_appends(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
@@ -176,15 +192,50 @@ def test_works_with_the_real_db_dependency(fake: FakeProvider):
 # --- History window ----------------------------------------------------------
 
 
-def test_history_window_is_capped_and_starts_with_user(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
-    seed_turns(conn, "c1", 15)  # 30 stored messages
+@pytest.mark.parametrize(
+    ("total", "start"),
+    [(1, 0), (19, 0), (20, 0), (21, 10), (29, 10), (30, 10), (31, 20), (40, 20), (41, 30)],
+)
+def test_window_start_moves_in_steps_of_ten(total: int, start: int):
+    """`total` counts the new message. Between 11 and 20 messages are always sent."""
+    assert chat_module.window_start(total) == start
+    assert min(total, 11) <= total - start <= chat_module.HISTORY_WINDOW
+
+
+@pytest.mark.parametrize(
+    ("turns", "sent", "first"),
+    [(9, 19, "q0"), (10, 11, "q5"), (14, 19, "q5"), (15, 11, "q10"), (20, 11, "q15")],
+)
+def test_history_window_sends_the_right_slice(
+    client: TestClient, conn: sqlite3.Connection, fake: FakeProvider, turns: int, sent: int, first: str,
+):
+    """`turns` stored turns = 2 × turns messages, plus the new one."""
+    seed_turns(conn, "c1", turns)
     post_chat(client, conversation_id="c1", message="latest")
 
-    sent = fake.calls[0].messages
-    assert len(sent) <= chat_module.HISTORY_WINDOW
-    assert sent[0].role == "user"
-    assert (sent[-1].role, sent[-1].content) == ("user", "latest")
-    assert (sent[-2].role, sent[-2].content) == ("assistant", "a14")  # most recent history kept
+    messages = fake.calls[0].messages
+    assert len(messages) == sent
+    assert (messages[0].role, messages[0].content) == ("user", first)
+    assert (messages[-2].role, messages[-2].content) == ("assistant", f"a{turns - 1}")  # newest history kept
+    assert (messages[-1].role, messages[-1].content) == ("user", "latest")
+
+
+def test_turns_inside_a_step_share_a_byte_identical_prefix(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
+    """The point of the stepped window: each request starts with the previous one, so the cache hits."""
+    seed_turns(conn, "c1", 10)  # 20 messages: the window starts at 10 for the next 5 turns
+    for i in range(5):
+        assert post_chat(client, conversation_id="c1", message=f"follow-up {i}").status_code == 200
+
+    calls = fake.calls
+    for before, after in zip(calls, calls[1:]):
+        previous = [(m.role, m.content) for m in before.messages]
+        assert [(m.role, m.content) for m in after.messages][:len(previous)] == previous
+        assert after.system == before.system
+    assert len(calls[-1].messages) == 19  # 28 stored + the new one; still starting at 10
+
+    post_chat(client, conversation_id="c1", message="next step")  # 31 messages: the start moves to 20
+    assert len(fake.calls[-1].messages) == 11
+    assert fake.calls[-1].messages[0].content == "follow-up 0"  # message 20 = the first follow-up
 
 
 def test_build_history_drops_leading_assistant_messages():

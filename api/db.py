@@ -214,6 +214,11 @@ def get_conversation(conn: sqlite3.Connection, conversation_id: str) -> dict[str
     return {**dict(row), "messages": [_message_dict(r) for r in rows]}
 
 
+def count_messages(conn: sqlite3.Connection, conversation_id: str) -> int:
+    row = conn.execute("SELECT COUNT(*) FROM messages WHERE conversation_id = ?", (conversation_id,))
+    return row.fetchone()[0]
+
+
 def get_recent_messages(
     conn: sqlite3.Connection, conversation_id: str, limit: int = 20
 ) -> list[dict[str, Any]]:
