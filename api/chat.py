@@ -9,6 +9,7 @@ A turn is saved only after the reply completes; on any failure nothing is saved.
 import asyncio
 import json
 import logging
+import math
 import sqlite3
 import time
 from collections.abc import AsyncIterator
@@ -27,7 +28,7 @@ from api.images import ImageError, decode_images
 from api.pricing import cost_usd
 from api.prompts import MODE_OPTIONS, Mode, SystemPrompt, load_system_prompt
 from providers import ModelProvider
-from providers.base import ImageData, Message, ModelResponse
+from providers.base import ImageData, Message, ModelResponse, SystemPart
 from providers.errors import (
     ProviderError,
     ProviderRateLimitError,
@@ -41,6 +42,7 @@ router = APIRouter()
 MAX_MESSAGE_CHARS = 20_000
 MAX_BODY_BYTES = 30 * 1024 * 1024  # fits 4 × 5 MB images as base64 (+33%) plus text
 HISTORY_WINDOW = 20  # max messages sent to the model, including the new one
+HISTORY_STEP = 10  # the window's start moves in steps, so the cached prefix lasts 5 turns (§6.1)
 IMAGE_OMITTED = "[image omitted]"
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 FIRST_ITEM_WAIT_SECONDS = 10.0  # quick failures within this become HTTP errors
@@ -95,7 +97,10 @@ async def chat(
     """Send a message to mX; the reply streams back as Server-Sent Events."""
     pending = start_turn(conn, req)
     prompt = load_system_prompt(req.mode, settings.system_prompt_file)
-    stream = provider.stream(pending.history, prompt.text, **MODE_OPTIONS[req.mode])
+    stream = provider.stream(
+        pending.history, build_system(prompt),
+        cache_messages=True, cache_ttl=settings.cache_ttl, **MODE_OPTIONS[req.mode],
+    )
     next_item = asyncio.ensure_future(anext(stream))
     await fail_fast(next_item, pending)
     events = stream_events(stream, next_item, pending, prompt, provider.name, conn)
@@ -118,7 +123,7 @@ def start_turn(conn: sqlite3.Connection, req: ChatRequest) -> PendingTurn:
         conversation_id, stored = db.new_id(), []
     elif db.conversation_exists(conn, req.conversation_id):
         conversation_id = req.conversation_id
-        stored = db.get_recent_messages(conn, conversation_id, limit=HISTORY_WINDOW - 1)
+        stored = load_window(conn, conversation_id)
     else:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return PendingTurn(
@@ -131,6 +136,30 @@ def start_turn(conn: sqlite3.Connection, req: ChatRequest) -> PendingTurn:
         history=build_history(stored, req.message, images),
         started=started,
     )
+
+
+def window_start(total: int) -> int:
+    """Index of the first message to send, out of `total` (stored + the new one).
+
+    All of them up to HISTORY_WINDOW; after that the start jumps forward
+    HISTORY_STEP messages at a time, so between 11 and 20 are sent and the
+    start (and the cached prefix) stays put for 5 turns (design.md §6.1, §15).
+    """
+    if total <= HISTORY_WINDOW:
+        return 0
+    return HISTORY_STEP * math.ceil((total - HISTORY_WINDOW) / HISTORY_STEP)
+
+
+def load_window(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str, Any]]:
+    """The stored messages from the window start on, oldest first."""
+    stored = db.count_messages(conn, conversation_id)
+    start = window_start(stored + 1)
+    return db.get_recent_messages(conn, conversation_id, limit=stored - start)
+
+
+def build_system(prompt: SystemPrompt) -> list[SystemPart]:
+    """The system prompt as cacheable parts (design.md §15). The learner profile joins in week 4."""
+    return [SystemPart(prompt.text, cache=True)]
 
 
 def build_history(

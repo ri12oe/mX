@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -24,6 +26,8 @@ class Settings(BaseSettings):
     cookie_secure: bool = True
     # Browser origins allowed to call the API from elsewhere. In .env, write as JSON.
     cors_origins: list[str] = ["http://localhost:5173"]
+    # Prompt-cache lifetime for every breakpoint (design.md §15): "5m" (write 1.25x) or "1h" (write 2x).
+    cache_ttl: Literal["5m", "1h"] = "5m"
 
     @field_validator("mx_api_key")
     @classmethod
