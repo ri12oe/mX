@@ -1,5 +1,6 @@
 """Conversation endpoints: list, get, delete (design.md §5)."""
 import sqlite3
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -20,12 +21,31 @@ class ConversationSummary(BaseModel):
     updated_at: str
 
 
+class CitationOut(BaseModel):
+    url: str
+    title: str
+
+
+class ToolStepOut(BaseModel):
+    """A stored tool step (design.md §7). Input/output are already clipped to stored sizes."""
+
+    id: str
+    seq: int
+    tool: str
+    status: str
+    input: dict[str, Any]
+    output: dict[str, Any] | None
+    error_code: str | None
+
+
 class MessageOut(BaseModel):
     id: str
     role: str
     content: str
     image_refs: list[str]
     created_at: str
+    citations: list[CitationOut] = []  # Phase 2: sources an answer cited
+    tool_steps: list[ToolStepOut] = []  # Phase 2: code runs and searches behind an answer
 
 
 class ConversationDetail(ConversationSummary):
@@ -56,7 +76,7 @@ def get_conversation(
 def delete_conversation(
     conversation_id: str, conn: sqlite3.Connection = Depends(get_db)
 ) -> Response:
-    """Delete a conversation and its messages, images, and usage rows."""
+    """Delete a conversation and its messages, images, and tool steps (usage rows are kept, design.md §7)."""
     if not db.delete_conversation(conn, conversation_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return Response(status_code=204)
