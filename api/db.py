@@ -49,6 +49,24 @@ class NewImage:
 
 
 @dataclass(frozen=True)
+class NewToolStep:
+    """One tool step of the assistant reply (design.md §7, §17). Clipped when saved."""
+
+    id: str
+    tool: str  # "code_execution" | "web_search"
+    status: Literal["ok", "error"]
+    input: dict[str, Any]  # {"code"} | {"query"}
+    output: dict[str, Any] | None = None  # {stdout, stderr, return_code} | {sources: [{url, title}]}
+    error_code: str | None = None
+
+
+@dataclass(frozen=True)
+class Citation:
+    url: str
+    title: str
+
+
+@dataclass(frozen=True)
 class Turn:
     """One user message plus the assistant reply, saved together."""
 
@@ -60,6 +78,16 @@ class Turn:
     assistant_content: str
     usage: UsageRecord
     user_images: tuple[NewImage, ...] = ()
+    tool_steps: tuple[NewToolStep, ...] = ()  # in order; seq = position
+    citations: tuple[Citation, ...] = ()
+
+
+# Stored sizes (design.md §7): enough to show what happened, never whole web pages.
+MAX_CODE_CHARS = 8_000
+MAX_OUTPUT_CHARS = 4_000  # each of stdout and stderr
+MAX_SOURCES = 10
+MAX_URL_CHARS = 2_000
+MAX_TITLE_CHARS = 300
 
 
 class SchemaVersionError(RuntimeError):
@@ -125,7 +153,10 @@ def save_turn(conn: sqlite3.Connection, turn: Turn, now: str | None = None) -> N
         for image in turn.user_images:
             _insert_image(conn, image, turn.user_message_id, turn.user_created_at)
         _insert_message(conn, turn.assistant_message_id, turn.conversation_id, "assistant",
-                        turn.assistant_content, now)
+                        turn.assistant_content, now,
+                        citations=[clip_citation(c) for c in turn.citations])
+        for seq, step in enumerate(turn.tool_steps):
+            _insert_tool_step(conn, turn.assistant_message_id, seq, clip_step(step), now)
         _insert_usage(conn, turn.assistant_message_id, turn.usage, now)
 
 
@@ -138,12 +169,68 @@ def save_spend(conn: sqlite3.Connection, usage: UsageRecord, now: str | None = N
 def _insert_message(
     conn: sqlite3.Connection, message_id: str, conversation_id: str,
     role: str, content: str, created_at: str, image_refs: list[str] | None = None,
+    citations: list[dict[str, str]] | None = None,
 ) -> None:
     conn.execute(
-        "INSERT INTO messages (id, conversation_id, role, content, image_refs, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
-        (message_id, conversation_id, role, content, json.dumps(image_refs or []), created_at),
+        "INSERT INTO messages (id, conversation_id, role, content, image_refs, citations, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (message_id, conversation_id, role, content, json.dumps(image_refs or []),
+         json.dumps(citations or []), created_at),
     )
+
+
+def _insert_tool_step(
+    conn: sqlite3.Connection, message_id: str, seq: int, step: NewToolStep, created_at: str
+) -> None:
+    conn.execute(
+        "INSERT INTO tool_steps (id, message_id, seq, tool, status, input, output, error_code, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (step.id, message_id, seq, step.tool, step.status, json.dumps(step.input),
+         None if step.output is None else json.dumps(step.output), step.error_code, created_at),
+    )
+
+
+# --- Clipping (stored sizes, design.md §7) -----------------------------------
+
+
+def clip_text(text: str, limit: int) -> tuple[str, bool]:
+    """(text cut to `limit` characters, whether it was cut)."""
+    return (text, False) if len(text) <= limit else (text[:limit], True)
+
+
+def clip_step(step: NewToolStep) -> NewToolStep:
+    """Code ≤ 8,000 chars; stdout/stderr ≤ 4,000 each; at most 10 sources of {url, title}.
+
+    A cut field gets a `<field>_truncated: true` flag so the UI can say so.
+    Anything else a tool returns (e.g. raw page content) is dropped.
+    """
+    step_input = dict(step.input)
+    if isinstance(step_input.get("code"), str):
+        step_input["code"], cut = clip_text(step_input["code"], MAX_CODE_CHARS)
+        if cut:
+            step_input["code_truncated"] = True
+    output = None if step.output is None else _clip_output(step.output)
+    return NewToolStep(step.id, step.tool, step.status, step_input, output, step.error_code)
+
+
+def _clip_output(output: dict[str, Any]) -> dict[str, Any]:
+    clipped: dict[str, Any] = {}
+    for key in ("stdout", "stderr"):
+        if isinstance(output.get(key), str):
+            clipped[key], cut = clip_text(output[key], MAX_OUTPUT_CHARS)
+            if cut:
+                clipped[f"{key}_truncated"] = True
+    if "return_code" in output:
+        clipped["return_code"] = output["return_code"]
+    if isinstance(output.get("sources"), list):
+        sources = [s for s in output["sources"] if isinstance(s, dict) and isinstance(s.get("url"), str)]
+        clipped["sources"] = [clip_citation(Citation(s["url"], str(s.get("title") or "")))
+                              for s in sources[:MAX_SOURCES]]
+    return clipped
+
+
+def clip_citation(citation: Citation) -> dict[str, str]:
+    return {"url": citation.url[:MAX_URL_CHARS], "title": citation.title[:MAX_TITLE_CHARS]}
 
 
 def _insert_image(
@@ -175,7 +262,7 @@ def _insert_usage(
 
 
 def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> bool:
-    """Delete a conversation and (via cascade) its messages and images.
+    """Delete a conversation and (via cascade) its messages, images, and tool steps.
 
     Its usage rows are kept with message_id set to NULL, so deleting chats
     never lowers the month's spend (design.md §7, §16).
@@ -213,11 +300,35 @@ def get_conversation(conn: sqlite3.Connection, conversation_id: str) -> dict[str
     if row is None:
         return None
     rows = conn.execute(
-        "SELECT id, role, content, image_refs, created_at FROM messages"
+        "SELECT id, role, content, image_refs, citations, created_at FROM messages"
         " WHERE conversation_id = ? ORDER BY created_at, rowid",
         (conversation_id,),
+    ).fetchall()
+    steps = _tool_steps_by_message(conn, conversation_id)
+    messages = [
+        {**_message_dict(r), "citations": json.loads(r["citations"]), "tool_steps": steps.get(r["id"], [])}
+        for r in rows
+    ]
+    return {**dict(row), "messages": messages}
+
+
+def _tool_steps_by_message(conn: sqlite3.Connection, conversation_id: str) -> dict[str, list[dict[str, Any]]]:
+    """All tool steps of a conversation's messages, grouped by message, in step order."""
+    rows = conn.execute(
+        "SELECT s.message_id, s.id, s.seq, s.tool, s.status, s.input, s.output, s.error_code"
+        " FROM tool_steps s JOIN messages m ON m.id = s.message_id"
+        " WHERE m.conversation_id = ? ORDER BY s.message_id, s.seq",
+        (conversation_id,),
     )
-    return {**dict(row), "messages": [_message_dict(r) for r in rows]}
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        grouped.setdefault(r["message_id"], []).append({
+            "id": r["id"], "seq": r["seq"], "tool": r["tool"], "status": r["status"],
+            "input": json.loads(r["input"]),
+            "output": None if r["output"] is None else json.loads(r["output"]),
+            "error_code": r["error_code"],
+        })
+    return grouped
 
 
 def count_messages(conn: sqlite3.Connection, conversation_id: str) -> int:
