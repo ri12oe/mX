@@ -22,6 +22,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from api import db
+from api.budget import BudgetStatus, budget_status
 from api.config import settings
 from api.deps import get_db, get_provider, require_auth
 from api.images import ImageError, decode_images
@@ -58,6 +59,10 @@ class ChatRequest(BaseModel):
         description="Up to 4 base64 images (JPEG, PNG, GIF, WebP; max 5 MB each). A data: URL is also accepted.",
     )
     mode: Mode = "normal"
+    budget_override: bool = Field(
+        default=False,
+        description="When this month's budget is used up, run this one message with the requested mode anyway.",
+    )
 
     @field_validator("message")
     @classmethod
@@ -86,6 +91,31 @@ class PendingTurn:
 Usage = ModelResponse | UsageMeter  # both carry the same token/tool counters
 
 
+@dataclass(frozen=True)
+class TurnPolicy:
+    """What the server actually applies to this turn after the budget check (design.md §16)."""
+
+    mode: Mode
+    tools: bool  # tools allowed (week 2 adds them; off whenever the budget forces brief mode)
+    forced: bool  # the budget overrode the requested mode/tools
+    budget: BudgetStatus  # the month's state before this turn
+
+
+def apply_budget(conn: sqlite3.Connection, req: ChatRequest) -> TurnPolicy:
+    """At 100% of the month's budget: brief mode, tools off, unless the request overrides it."""
+    status = budget_status(conn, settings.monthly_budget_usd)
+    forced = status.state == "brief" and not req.budget_override
+    return TurnPolicy(mode="brief" if forced else req.mode, tools=not forced, forced=forced, budget=status)
+
+
+def budget_event(status: BudgetStatus, forced: bool) -> dict[str, Any]:
+    """`budget` in the meta and done events."""
+    return {
+        "state": status.state, "spent_usd": status.spent_usd, "limit_usd": status.limit_usd,
+        "resets_at": status.resets_at, "forced": forced,
+    }
+
+
 def limit_body_size(request: Request) -> None:
     """Reject oversized requests (413) based on their declared size."""
     length = request.headers.get("content-length", "")
@@ -100,14 +130,15 @@ async def chat(
     provider: ModelProvider = Depends(get_provider),
 ) -> StreamingResponse:
     """Send a message to mX; the reply streams back as Server-Sent Events."""
-    pending = start_turn(conn, req)
-    prompt = load_system_prompt(req.mode, settings.system_prompt_file)
+    policy = apply_budget(conn, req)
+    pending = start_turn(conn, req, policy.mode)
+    prompt = load_system_prompt(policy.mode, settings.system_prompt_file)
     stream = provider.stream(
         pending.history, build_system(prompt), cache_messages=True,
-        cache_ttl=settings.cache_ttl, meter=pending.meter, **MODE_OPTIONS[req.mode],
+        cache_ttl=settings.cache_ttl, meter=pending.meter, **MODE_OPTIONS[policy.mode],
     )
     next_item = asyncio.ensure_future(anext(stream))
-    turn = TurnContext(pending, prompt, provider.name, conn)
+    turn = TurnContext(pending, prompt, provider.name, conn, policy)
     await fail_fast(next_item, turn)
     events = stream_events(stream, next_item, turn)
     return StreamingResponse(events, media_type="text/event-stream", headers=SSE_HEADERS)
@@ -116,7 +147,7 @@ async def chat(
 # --- Before streaming --------------------------------------------------------
 
 
-def start_turn(conn: sqlite3.Connection, req: ChatRequest) -> PendingTurn:
+def start_turn(conn: sqlite3.Connection, req: ChatRequest, mode: Mode) -> PendingTurn:
     """Check images (422) and the conversation (404), then build the history to send."""
     started = time.monotonic()
     try:
@@ -140,7 +171,7 @@ def start_turn(conn: sqlite3.Connection, req: ChatRequest) -> PendingTurn:
         user_created_at=db.now_iso(),
         user_images=tuple(db.NewImage(db.new_id(), i.media_type, i.data) for i in images),
         history=build_history(stored, req.message, images),
-        mode=req.mode,
+        mode=mode,
         started=started,
     )
 
@@ -228,6 +259,7 @@ class TurnContext:
     prompt: SystemPrompt
     provider_name: str
     conn: sqlite3.Connection
+    policy: TurnPolicy
     recorded: bool = False  # this turn's spend is in the usage table (or nothing was spent)
 
     def usage_record(self, usage: Usage, status: db.UsageStatus) -> db.UsageRecord:
@@ -291,9 +323,13 @@ async def stream_events(
 ) -> AsyncIterator[str]:
     pending = turn.pending
     try:
+        policy = turn.policy
         yield sse("meta", {
             "conversation_id": pending.conversation_id,
             "message_id": pending.assistant_message_id,
+            "mode": policy.mode,
+            "tools": policy.tools,
+            "budget": budget_event(policy.budget, policy.forced),
         })
         try:
             while True:
@@ -343,7 +379,12 @@ async def stream_events(
 
         cost = turn_cost(reply)
         log_turn(pending, status="ok", usage=reply, cost=cost)
-        yield sse("done", {"usage": usage_event(reply, cost), "stop_reason": reply.stop_reason})
+        after = budget_status(turn.conn, settings.monthly_budget_usd)
+        yield sse("done", {
+            "usage": usage_event(reply, cost),
+            "stop_reason": reply.stop_reason,
+            "budget": budget_event(after, policy.forced),
+        })
     finally:
         # Anything that ends the turn without recording it (the browser disconnected,
         # the server is shutting down) is an aborted turn; its spend is still saved.

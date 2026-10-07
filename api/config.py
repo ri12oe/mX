@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
     # Prompt-cache lifetime for every breakpoint (design.md §15): "5m" (write 1.25x) or "1h" (write 2x).
     cache_ttl: Literal["5m", "1h"] = "5m"
+    # Monthly API budget for /chat (design.md §16): warning at 80%, brief mode at 100%.
+    monthly_budget_usd: float = 20.0
+
+    @field_validator("monthly_budget_usd")
+    @classmethod
+    def _budget_must_be_positive(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("MONTHLY_BUDGET_USD must be more than 0.")
+        return value
 
     @field_validator("mx_api_key")
     @classmethod
