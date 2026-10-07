@@ -19,6 +19,7 @@ from api.conversations import router as conversations_router
 from api.deps import get_db, get_provider, require_auth
 from api.images import router as images_router
 from api.migrate import migrate
+from api.usage import router as usage_router
 
 __all__ = ["app", "get_db", "get_provider", "require_auth"]
 
@@ -72,6 +73,7 @@ app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(conversations_router)
 app.include_router(images_router)
+app.include_router(usage_router)
 
 
 @app.get("/health")

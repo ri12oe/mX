@@ -69,11 +69,23 @@ def state_for(spent_usd: float, limit_usd: float) -> BudgetState:
     return "ok"
 
 
+def parse_month(label: str) -> tuple[int, int]:
+    """"2026-10" → (2026, 10). Raises ValueError for anything else."""
+    year, _, month = label.partition("-")
+    if len(year) != 4 or len(month) != 2 or not (year + month).isdigit() or not 1 <= int(month) <= 12:
+        raise ValueError(f"month must look like 2026-10, got {label!r}")
+    return int(year), int(month)
+
+
 def budget_status(
     conn: sqlite3.Connection, limit_usd: float, now: datetime | None = None, tz: tzinfo | None = None
 ) -> BudgetStatus:
     """This month's spend from usage rows of every status (failed and aborted turns cost money too)."""
-    month = current_month(now, tz)
+    return month_status(conn, current_month(now, tz), limit_usd)
+
+
+def month_status(conn: sqlite3.Connection, month: Month, limit_usd: float) -> BudgetStatus:
+    """Spend and state for any local month (the current one for the guard; any one for the cost page)."""
     spent, unknown = conn.execute(
         "SELECT COALESCE(SUM(cost_usd), 0), COUNT(*) - COUNT(cost_usd) FROM usage"
         " WHERE created_at >= ? AND created_at < ?",
