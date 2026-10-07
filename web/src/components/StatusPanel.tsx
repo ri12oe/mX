@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { Mode, Usage } from "../types";
+import { BUDGET_LABELS, cacheShare, percent, percentUsed, usd } from "../budget";
+import type { Budget, Mode, Usage } from "../types";
 import { Core, type CoreState } from "./Core";
 
 export interface SessionStats {
@@ -15,11 +16,15 @@ interface Props {
   session: SessionStats;
   conversationCount: number;
   mode: Mode;
+  budget: Budget | null;
+  onOpenCost: () => void;
   onSignOut: () => void;
 }
 
 /** Right-hand HUD: the core plus real readouts only (no decorative fake data). */
-export function StatusPanel({ coreState, model, lastUsage, session, conversationCount, mode, onSignOut }: Props) {
+export function StatusPanel({
+  coreState, model, lastUsage, session, conversationCount, mode, budget, onOpenCost, onSignOut,
+}: Props) {
   return (
     <aside className="status-panel" aria-label="System status">
       <Core state={coreState} size={170} />
@@ -29,11 +34,13 @@ export function StatusPanel({ coreState, model, lastUsage, session, conversation
         <Row label="Model" value={model ?? "—"} mono />
         <Row label="Mode" value={mode === "brief" ? "Brief" : "Normal"} />
       </Readout>
+      <MonthReadout budget={budget} onOpenCost={onOpenCost} />
       <Readout title="Last reply">
         {lastUsage ? (
           <>
             <Row label="Tokens in" value={lastUsage.input_tokens.toLocaleString()} mono />
             <Row label="Tokens out" value={lastUsage.output_tokens.toLocaleString()} mono />
+            <Row label="Cache" value={percent(cacheShare(lastUsage))} mono />
             <Row label="Cost" value={formatCost(lastUsage.cost_usd)} mono />
           </>
         ) : (
@@ -52,6 +59,27 @@ export function StatusPanel({ coreState, model, lastUsage, session, conversation
         Sign out
       </button>
     </aside>
+  );
+}
+
+/** This month's spend against the limit, with a bar colored (and labeled) by state (design.md §16). */
+function MonthReadout({ budget, onOpenCost }: { budget: Budget | null; onOpenCost: () => void }) {
+  return (
+    <Readout title="Month">
+      {budget ? (
+        <div className={`budget budget-${budget.state}`}>
+          <Row label="Spend" value={`${usd(budget.spent_usd)} / ${usd(budget.limit_usd)}`} mono />
+          <div className="budget-bar" role="meter" aria-label="Month budget used" aria-valuemin={0}
+            aria-valuemax={100} aria-valuenow={Math.round(percentUsed(budget))}>
+            <div className="budget-bar-fill" style={{ width: `${percentUsed(budget)}%` }} />
+          </div>
+          <Row label="State" value={BUDGET_LABELS[budget.state]} />
+        </div>
+      ) : (
+        <p className="readout-empty">Loading…</p>
+      )}
+      <button type="button" className="cost-link" onClick={onOpenCost}>Cost details</button>
+    </Readout>
   );
 }
 

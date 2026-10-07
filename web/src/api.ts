@@ -2,7 +2,7 @@
 // (in development, Vite proxies the API paths), so requests carry the HttpOnly
 // session cookie automatically; no key is ever stored in the browser.
 import { SSEParser } from "./sse";
-import type { ChatEvent, ChatRequest, ConversationDetail, ConversationSummary } from "./types";
+import type { Budget, ChatEvent, ChatRequest, ConversationDetail, ConversationSummary, UsageSummary } from "./types";
 
 /** An HTTP error from the API, with its machine-readable code when there is one. */
 export class ApiError extends Error {
@@ -84,6 +84,17 @@ export async function deleteConversation(id: string): Promise<void> {
 }
 
 export const imageUrl = (id: string): string => `/images/${encodeURIComponent(id)}`;
+
+/** This month's spend against the limit (design.md §16). */
+export async function getBudget(): Promise<Budget> {
+  return (await request("/usage/budget")).json();
+}
+
+/** Month totals and one row per local day. `month` is "YYYY-MM"; default: this month. */
+export async function getUsageSummary(month?: string): Promise<UsageSummary> {
+  const query = month ? `?month=${encodeURIComponent(month)}` : "";
+  return (await request(`/usage/summary${query}`)).json();
+}
 
 /**
  * POST /chat and call onEvent for each streamed event (meta, delta..., done | error).

@@ -504,6 +504,63 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .button-primary:hover:not(:disabled) { background: rgba(0, 229, 255, 0.3); box-shadow: var(--glow-strong); }
 .button-secondary { border: 1px solid var(--line); background: none; color: var(--muted); }
 
+/* ---------- Budget and cost (design.md §16) ---------- */
+
+/* State colors are status colors: always paired with a text label, never color alone. */
+.budget-ok { --state: var(--cyan); }
+.budget-warning { --state: var(--warn); }
+.budget-brief { --state: var(--danger); }
+
+.budget-bar { height: 6px; margin: 6px 0 4px; border-radius: 3px; background: rgba(0, 229, 255, 0.1); overflow: hidden; }
+.budget-bar-fill { height: 100%; min-width: 2px; border-radius: 3px; background: var(--state); box-shadow: 0 0 8px var(--state); transition: width 0.4s ease; }
+.budget .readout-row:last-of-type .readout-value { color: var(--state); }
+.cost-link {
+  width: 100%; margin-top: 8px; padding: 5px 8px; border: 1px solid var(--line); background: none;
+  color: var(--cyan-soft); font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase;
+}
+.cost-link:hover { border-color: var(--line-strong); background: rgba(0, 229, 255, 0.08); }
+
+/* Top-bar $ button: only when the status card is hidden (smaller screens). */
+.icon-button.cost-button { display: none; font-family: var(--font-hud); font-size: 15px; color: var(--state); border: 1px solid var(--line); border-radius: 50%; }
+
+.budget-banner { gap: 14px; }
+.budget-warning.banner { border-color: rgba(255, 200, 87, 0.5); background: var(--warn-soft); color: #ffe2a3; }
+.budget-brief.banner { border-color: rgba(255, 77, 94, 0.5); background: var(--danger-soft); color: #ffb3bb; }
+.budget-banner .override-button {
+  flex-shrink: 0; padding: 5px 12px; border: 1px solid currentColor; border-radius: 999px;
+  font-size: 12.5px; letter-spacing: 0.06em; white-space: nowrap;
+}
+.budget-banner .override-button[aria-pressed="true"] { background: rgba(255, 179, 187, 0.16); }
+
+.cost-panel { width: min(620px, 100%); max-height: min(86vh, 820px); overflow-y: auto; text-align: left; padding: 20px; }
+.cost-month { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 14px; }
+.cost-month-name { min-width: 170px; text-align: center; font-family: var(--font-hud); font-size: 13px; letter-spacing: 0.12em; color: var(--cyan-soft); }
+.cost-month .icon-button { font-size: 22px; line-height: 1; border-color: var(--line); border-radius: 50%; }
+.cost-month .icon-button:disabled { opacity: 0.3; cursor: default; }
+.cost-error { color: var(--danger); }
+.cost-total { margin-bottom: 16px; }
+.cost-total-figure { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cost-spent { font-family: var(--font-hud); font-size: 30px; color: var(--text); text-shadow: var(--glow); }
+.cost-limit { color: var(--muted); }
+.budget-state-label { margin-left: auto; padding: 1px 10px; border: 1px solid var(--state); color: var(--state); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; }
+.cost-note { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+
+.cost-days { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 14px; }
+.cost-days th, .cost-days td { padding: 5px 6px; text-align: right; font-weight: 400; }
+.cost-days thead th { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); }
+.cost-days tbody th { text-align: left; color: var(--text); white-space: nowrap; }
+.cost-days tbody tr:hover { background: rgba(0, 229, 255, 0.06); }
+.cost-days td { font-family: var(--mono); font-size: 12.5px; color: var(--text); }
+.cost-days thead th:first-child { text-align: left; }
+.cost-day-spend { width: 58%; }
+.cost-day-cell { display: flex; align-items: center; gap: 10px; }
+.cost-day-track { flex: 1; min-width: 56px; height: 10px; }
+.cost-day-bar { display: block; height: 100%; min-width: 2px; border-radius: 0 4px 4px 0; background: var(--cyan); opacity: 0.85; }
+.cost-day-value { min-width: 52px; }
+.cost-totals .readout-title { font-family: var(--font-hud); }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 1279px) {
@@ -511,6 +568,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   .status-panel { display: none; }
   .topbar-core { display: block; }
   .spoke { max-width: 126px; }
+  .icon-button.cost-button { display: grid; }
 }
 
 /* Narrow: the dial becomes a round button in the top bar that opens All chats. */
@@ -530,6 +588,10 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   .topbar { gap: 8px; }
   .back-button { padding: 6px; }
   .back-button span, .status-chip { display: none; }
+  .budget-banner { flex-direction: column; align-items: flex-start; }
+  .budget-banner .override-button { white-space: normal; }
+  .cost-panel { padding: 16px 12px; }
+  .cost-days th, .cost-days td { padding: 5px 3px; }
 }
 
 /* Calm mode: no motion when the system asks for reduced motion. */

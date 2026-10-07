@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { deleteConversation, getConversation, isSignedOut, listConversations, logout, streamChat, whoami } from "./api";
+import {
+  deleteConversation, getBudget, getConversation, isSignedOut, listConversations, logout, streamChat, whoami,
+} from "./api";
+import { BudgetBanner } from "./components/BudgetBanner";
 import { Composer } from "./components/Composer";
+import { CostPanel } from "./components/CostPanel";
 import { LoginDialog } from "./components/LoginDialog";
 import { MessageView } from "./components/MessageView";
 import { Core, type CoreState } from "./components/Core";
@@ -8,7 +12,7 @@ import { HistoryPanel } from "./components/HistoryPanel";
 import { OrbitDial } from "./components/OrbitDial";
 import { StatusPanel, type SessionStats } from "./components/StatusPanel";
 import { loadMode, saveMode } from "./settings";
-import type { ChatEvent, ConversationSummary, Mode, StoredMessage, UiMessage, Usage } from "./types";
+import type { Budget, ChatEvent, ConversationSummary, Mode, StoredMessage, UiMessage, Usage } from "./types";
 
 const SUGGESTIONS = [
   "Explain integration by parts with a worked example",
@@ -39,6 +43,10 @@ export default function App() {
   const [lastUsage, setLastUsage] = useState<Usage | null>(null);
   const [session, setSession] = useState<SessionStats>({ replies: 0, costUsd: 0, unknownCost: false });
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [costOpen, setCostOpen] = useState(false);
+  const [budget, setBudget] = useState<Budget | null>(null);
+  const [overrideArmed, setOverrideArmed] = useState(false); // next message ignores the budget's brief mode
+  const [warningDismissed, setWarningDismissed] = useState(false); // the 80% warning, once per session
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -85,6 +93,11 @@ export default function App() {
   useEffect(() => {
     if (auth === "signed-in") void refreshList();
   }, [auth, refreshList]);
+
+  // The month's budget for the status card and banner; chat events keep it current afterwards.
+  useEffect(() => {
+    if (auth === "signed-in") getBudget().then(setBudget).catch(() => {});
+  }, [auth]);
 
   // Keep the newest text in view while a reply streams in.
   useEffect(() => {
@@ -138,6 +151,8 @@ export default function App() {
     startNewChat();
     setConversations([]);
     setBanner(null);
+    setBudget(null);
+    setOverrideArmed(false);
     setAuth("signed-out");
   }
 
@@ -161,6 +176,9 @@ export default function App() {
     setStreaming(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    // The override covers exactly one message (design.md §16).
+    const budgetOverride = overrideArmed && budget?.state === "brief";
+    setOverrideArmed(false);
 
     // The server saves a turn only when it completes (design.md §5), so a new
     // conversation's id is adopted on `done`. Adopting it at `meta` would make
@@ -171,6 +189,7 @@ export default function App() {
       switch (event.type) {
         case "meta":
           conversationId = event.conversation_id;
+          if (event.budget) setBudget(event.budget);
           break;
         case "delta":
           update((m) => ({ content: m.content + event.text }));
@@ -179,6 +198,7 @@ export default function App() {
           update(() => ({ streaming: false, usage: event.usage, stopReason: event.stop_reason }));
           setActiveId(conversationId);
           setLastUsage(event.usage);
+          if (event.budget) setBudget(event.budget);
           setSession((s) => ({
             replies: s.replies + 1,
             costUsd: s.costUsd + (event.usage.cost_usd ?? 0),
@@ -194,7 +214,13 @@ export default function App() {
 
     try {
       await streamChat(
-        { message: text, mode, conversation_id: activeId ?? undefined, images: images.length ? images : undefined },
+        {
+          message: text,
+          mode,
+          conversation_id: activeId ?? undefined,
+          images: images.length ? images : undefined,
+          ...(budgetOverride ? { budget_override: true } : {}),
+        },
         onEvent,
         controller.signal,
       );
@@ -249,6 +275,11 @@ export default function App() {
           <span className={`status-chip status-${coreState}`} aria-hidden="true">
             {streaming ? "Live" : model ? "Online" : "Link"}
           </span>
+          {/* The status card (with its cost link) is hidden on smaller screens; this takes its place. */}
+          <button type="button" className={`icon-button cost-button budget-${budget?.state ?? "ok"}`}
+            onClick={() => setCostOpen(true)} aria-label="Open cost details" title="Cost">
+            $
+          </button>
         </header>
 
         {banner && (
@@ -257,6 +288,14 @@ export default function App() {
             <button type="button" onClick={() => setBanner(null)} aria-label="Dismiss">×</button>
           </div>
         )}
+
+        <BudgetBanner
+          budget={budget}
+          overrideArmed={overrideArmed}
+          onToggleOverride={() => setOverrideArmed((armed) => !armed)}
+          warningDismissed={warningDismissed}
+          onDismissWarning={() => setWarningDismissed(true)}
+        />
 
         <div className="messages">
           {messages.length === 0 ? (
@@ -302,8 +341,12 @@ export default function App() {
         session={session}
         conversationCount={conversations.length}
         mode={mode}
+        budget={budget}
+        onOpenCost={() => setCostOpen(true)}
         onSignOut={() => void signOut()}
       />
+
+      {costOpen && <CostPanel onClose={() => setCostOpen(false)} />}
 
       {historyOpen && (
         <HistoryPanel
