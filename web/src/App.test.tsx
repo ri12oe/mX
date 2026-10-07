@@ -14,6 +14,7 @@ interface FakeApi {
   chat: (init: RequestInit) => Response;
   deleted: string[];
   loggedOut: boolean;
+  budget: { state: string; spent_usd: number; limit_usd: number; resets_at: string; month: string };
 }
 
 let api: FakeApi;
@@ -36,7 +37,10 @@ function streamResponse(chunks: string[], signal?: AbortSignal | null, keepOpen 
 }
 
 function installFakeApi(signedIn: boolean) {
-  api = { signedIn, conversations: [], deleted: [], loggedOut: false, chat: () => new Response(null, { status: 500 }) };
+  api = {
+    signedIn, conversations: [], deleted: [], loggedOut: false, chat: () => new Response(null, { status: 500 }),
+    budget: { state: "ok", spent_usd: 1.5, limit_usd: 20, resets_at: "2026-11-01T00:00:00-04:00", month: "2026-10" },
+  };
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string, init: RequestInit = {}) => {
@@ -54,6 +58,7 @@ function installFakeApi(signedIn: boolean) {
       }
       if (!api.signedIn) return json({ detail: "Not signed in" }, 401);
       if (path === "/whoami") return json({ model: "claude-opus-5-5" });
+      if (path === "/usage/budget") return json(api.budget);
       if (path.startsWith("/conversations?")) return json(api.conversations);
       if (path === "/chat") return api.chat(init);
       if (init.method === "DELETE") {
@@ -249,6 +254,57 @@ describe("chatting", () => {
     await screen.findByText("How can I help you learn today?");
     expect(screen.queryByText("Earlier question")).toBeNull();
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("New chat");
+  });
+
+  it("at the budget limit, the override sends budget_override once", async () => {
+    api.budget = { ...api.budget, state: "brief", spent_usd: 20.4 };
+    const bodies: Record<string, unknown>[] = [];
+    api.chat = (init) => {
+      bodies.push(JSON.parse(String(init.body)));
+      const forced = !bodies.at(-1)!.budget_override;
+      const budget = { ...api.budget, forced };
+      return streamResponse([sse([
+        ["meta", { conversation_id: "c1", message_id: `m${bodies.length}`, mode: forced ? "brief" : "normal", tools: !forced, budget }],
+        ["delta", { text: `Reply ${bodies.length}` }],
+        ["done", { usage: { model: "m", input_tokens: 1, output_tokens: 1, cost_usd: 0.01 }, stop_reason: "end_turn", budget }],
+      ])]);
+    };
+    render(<App />);
+    const notice = await screen.findByText(/Brief mode, tools off/);
+    expect(notice.closest("[role=status]")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Full answer for this message" }));
+    send("Explain Fourier series in depth");
+    await screen.findByText("Reply 1");
+    send("And a short follow-up");
+    await screen.findByText("Reply 2");
+
+    expect(bodies[0].budget_override).toBe(true);
+    expect(bodies[1]).not.toHaveProperty("budget_override"); // only that one message
+    expect(screen.getByRole("button", { name: "Full answer for this message" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("shows the 80% warning until dismissed, and the month on the status card", async () => {
+    api.budget = { ...api.budget, state: "warning", spent_usd: 16.2 };
+    render(<App />);
+    expect((await screen.findByRole("status")).textContent).toContain("$16.20 of this month's $20 used");
+    expect(within(screen.getByRole("region", { name: "Month" })).getByText("$16.20 / $20.00")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss budget warning" }));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("updates the month's spend from the reply's done event", async () => {
+    api.chat = () => streamResponse([sse([
+      ["meta", { conversation_id: "c1", message_id: "m1" }],
+      ["delta", { text: "Hi" }],
+      ["done", { usage: { model: "m", input_tokens: 1, output_tokens: 1, cost_usd: 0.25 }, stop_reason: "end_turn",
+        budget: { ...api.budget, spent_usd: 1.75, forced: false } }],
+    ])]);
+    await renderSignedIn();
+    const month = screen.getByRole("region", { name: "Month" });
+    await within(month).findByText("$1.50 / $20.00");
+    send("Hello");
+    await within(month).findByText("$1.75 / $20.00");
   });
 
   it("fills the composer from a suggestion without sending", async () => {

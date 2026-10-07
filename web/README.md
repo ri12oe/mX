@@ -31,6 +31,7 @@ changed and the API serves it at http://localhost:8000.
 - Images: attach, paste, or drop up to 4 (JPEG, PNG, GIF, WebP, max 5 MB each).
 - Markdown, tables, code highlighting, and math (KaTeX) in replies. Raw HTML from the model is never rendered.
 - The model, tokens, and cost are shown under each live reply.
+- **Budget and cost** (Phase 2): the status card shows this month's spend against `MONTHLY_BUDGET_USD` (a bar plus a text state: On track / Warning / Limit reached) and the last reply's cache share. A banner warns at 80% (dismissible for the session); at 100% it explains brief mode and offers "Full answer for this message" (sends `budget_override` once). **Cost details** (or the **$** button on smaller screens) opens the cost panel: month selector, a bar per local day, and month totals.
 - Dark only; the layout works down to phone width.
 
 ## Scripts
@@ -48,6 +49,7 @@ changed and the API serves it at http://localhost:8000.
 | `src/api.ts` | API client (same-origin with the session cookie, typed errors, `login`/`logout`, `streamChat`) |
 | `src/sse.ts` | Server-Sent Events parser |
 | `src/App.tsx` | State and wiring: conversations, sending, streaming events |
-| `src/components/` | `OrbitDial`, `HistoryPanel`, `Core`, `StatusPanel`, `MessageView`, `Composer`, `LoginDialog`, `Markdown`, `StoredImage` |
+| `src/components/` | `OrbitDial`, `HistoryPanel`, `Core`, `StatusPanel`, `BudgetBanner`, `CostPanel`, `MessageView`, `Composer`, `LoginDialog`, `Markdown`, `StoredImage` |
+| `src/budget.ts` | Budget formatting helpers (money, percent, reset date, month navigation) |
 | `src/markdown.ts` | Keeps `$` prices from being read as math (Pandoc's inline-math rule) |
 | `src/styles.css` | Design tokens and the HUD layout |

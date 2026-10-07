@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { coreStateFor } from "../App";
 import type { UiMessage } from "../types";
@@ -57,8 +57,34 @@ describe("StatusPanel", () => {
     session: { replies: 0, costUsd: 0, unknownCost: false },
     conversationCount: 1,
     mode: "normal" as const,
+    budget: null,
+    onOpenCost: () => {},
     onSignOut: () => {},
   };
+
+  it.each([
+    ["ok", 4.12, "$4.12 / $20.00", "On track", 21],
+    ["warning", 16.5, "$16.50 / $20.00", "Warning", 83],
+    ["brief", 23, "$23.00 / $20.00", "Limit reached", 100],
+  ] as const)("shows the month's %s budget with a labeled bar", (state, spent, text, label, pct) => {
+    const onOpenCost = vi.fn();
+    const budget = { state, spent_usd: spent, limit_usd: 20, resets_at: "2026-11-01T00:00:00-04:00" };
+    render(<StatusPanel {...base} budget={budget} onOpenCost={onOpenCost} />);
+    const month = screen.getByRole("region", { name: "Month" });
+    expect(within(month).getByText(text)).toBeTruthy();
+    expect(within(month).getByText(label)).toBeTruthy(); // never color alone
+    expect(within(month).getByRole("meter").getAttribute("aria-valuenow")).toBe(String(pct));
+    expect(month.querySelector(`.budget-${state}`)).not.toBeNull();
+    fireEvent.click(within(month).getByRole("button", { name: "Cost details" }));
+    expect(onOpenCost).toHaveBeenCalled();
+  });
+
+  it("shows the last reply's cache share", () => {
+    const lastUsage = { model: "m", input_tokens: 100, output_tokens: 5, cost_usd: 0.001,
+      cache_read_tokens: 800, cache_write_tokens: 100 };
+    render(<StatusPanel {...base} lastUsage={lastUsage} />);
+    expect(within(screen.getByRole("region", { name: "Last reply" })).getByText("80%")).toBeTruthy();
+  });
 
   it("shows only real readouts", () => {
     render(<StatusPanel {...base} />);
