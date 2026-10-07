@@ -13,7 +13,7 @@ import math
 import sqlite3
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
@@ -28,7 +28,7 @@ from api.images import ImageError, decode_images
 from api.pricing import cost_usd
 from api.prompts import MODE_OPTIONS, Mode, SystemPrompt, load_system_prompt
 from providers import ModelProvider
-from providers.base import ImageData, Message, ModelResponse, SystemPart
+from providers.base import ImageData, Message, ModelResponse, SystemPart, UsageMeter
 from providers.errors import (
     ProviderError,
     ProviderRateLimitError,
@@ -78,7 +78,12 @@ class PendingTurn:
     user_created_at: str
     user_images: tuple[db.NewImage, ...]
     history: list[Message]
+    mode: Mode
     started: float  # time.monotonic() when the request arrived
+    meter: UsageMeter = field(default_factory=UsageMeter)  # filled by the provider while it streams
+
+
+Usage = ModelResponse | UsageMeter  # both carry the same token/tool counters
 
 
 def limit_body_size(request: Request) -> None:
@@ -98,12 +103,13 @@ async def chat(
     pending = start_turn(conn, req)
     prompt = load_system_prompt(req.mode, settings.system_prompt_file)
     stream = provider.stream(
-        pending.history, build_system(prompt),
-        cache_messages=True, cache_ttl=settings.cache_ttl, **MODE_OPTIONS[req.mode],
+        pending.history, build_system(prompt), cache_messages=True,
+        cache_ttl=settings.cache_ttl, meter=pending.meter, **MODE_OPTIONS[req.mode],
     )
     next_item = asyncio.ensure_future(anext(stream))
-    await fail_fast(next_item, pending)
-    events = stream_events(stream, next_item, pending, prompt, provider.name, conn)
+    turn = TurnContext(pending, prompt, provider.name, conn)
+    await fail_fast(next_item, turn)
+    events = stream_events(stream, next_item, turn)
     return StreamingResponse(events, media_type="text/event-stream", headers=SSE_HEADERS)
 
 
@@ -134,6 +140,7 @@ def start_turn(conn: sqlite3.Connection, req: ChatRequest) -> PendingTurn:
         user_created_at=db.now_iso(),
         user_images=tuple(db.NewImage(db.new_id(), i.media_type, i.data) for i in images),
         history=build_history(stored, req.message, images),
+        mode=req.mode,
         started=started,
     )
 
@@ -181,7 +188,7 @@ def with_image_markers(message: dict[str, Any]) -> str:
     return "\n".join([*markers, message["content"]])
 
 
-async def fail_fast(next_item: asyncio.Future[str | ModelResponse], pending: PendingTurn) -> None:
+async def fail_fast(next_item: asyncio.Future[str | ModelResponse], turn: "TurnContext") -> None:
     """Wait briefly for the first chunk, so quick failures (bad key, overloaded,
     refused) become HTTP errors. If the model is still thinking after
     FIRST_ITEM_WAIT_SECONDS, start streaming anyway so the connection isn't silent.
@@ -191,12 +198,12 @@ async def fail_fast(next_item: asyncio.Future[str | ModelResponse], pending: Pen
         return
     exc = next_item.exception()
     if isinstance(exc, ProviderError):
-        log_turn(pending, status=exc.code)
+        turn.record_failure(exc.code, "failed")
         raise HTTPException(
             status_code=http_status_for(exc), detail={"code": exc.code, "message": str(exc)}
         ) from exc
     if isinstance(exc, StopAsyncIteration):
-        log_turn(pending, status="provider_error")
+        turn.record_failure("provider_error", "failed")
         raise HTTPException(
             status_code=502, detail={"code": "provider_error", "message": "Empty reply stream."}
         ) from None
@@ -213,104 +220,135 @@ def http_status_for(exc: ProviderError) -> int:
 # --- Streaming ---------------------------------------------------------------
 
 
+@dataclass
+class TurnContext:
+    """One turn's state while it streams, plus how its outcome is recorded."""
+
+    pending: PendingTurn
+    prompt: SystemPrompt
+    provider_name: str
+    conn: sqlite3.Connection
+    recorded: bool = False  # this turn's spend is in the usage table (or nothing was spent)
+
+    def usage_record(self, usage: Usage, status: db.UsageStatus) -> db.UsageRecord:
+        return db.UsageRecord(
+            provider=self.provider_name,
+            model=usage.model or "unknown",
+            prompt_version=self.prompt.version,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cost_usd=turn_cost(usage),
+            latency_ms=elapsed_ms(self.pending),
+            mode=self.pending.mode,
+            status=status,
+            cache_read_tokens=usage.cache_read_tokens,
+            cache_write_5m_tokens=usage.cache_write_5m_tokens,
+            cache_write_1h_tokens=usage.cache_write_1h_tokens,
+            web_searches=usage.web_searches,
+            code_runs=usage.code_runs,
+            requests=usage.requests,
+        )
+
+    def save(self, reply: ModelResponse) -> None:
+        """Write the whole turn in one transaction (design.md §5)."""
+        p = self.pending
+        db.save_turn(self.conn, db.Turn(
+            conversation_id=p.conversation_id,
+            user_message_id=p.user_message_id,
+            user_content=p.user_content,
+            user_created_at=p.user_created_at,
+            user_images=p.user_images,
+            assistant_message_id=p.assistant_message_id,
+            assistant_content=reply.text,
+            usage=self.usage_record(reply, "ok"),
+        ))
+        self.recorded = True
+
+    def record_failure(self, log_status: str, status: db.UsageStatus) -> None:
+        """Log the outcome and, if any request had started, save what it cost (no content).
+
+        Called at most once per turn. A request that never started cost
+        nothing, so no row is written for it.
+        """
+        if self.recorded:
+            return
+        self.recorded = True
+        meter = self.pending.meter
+        log_turn(self.pending, status=log_status, usage=meter, cost=turn_cost(meter) if meter.requests else None)
+        if not meter.requests:
+            return
+        try:
+            db.save_spend(self.conn, self.usage_record(meter, status))
+        except sqlite3.Error:
+            logger.exception("Saving the spend of a %s turn failed (conversation=%s)",
+                             status, self.pending.conversation_id)
+
+
 async def stream_events(
     stream: AsyncIterator[str | ModelResponse],
     next_item: asyncio.Future[str | ModelResponse],
-    pending: PendingTurn,
-    prompt: SystemPrompt,
-    provider_name: str,
-    conn: sqlite3.Connection,
+    turn: TurnContext,
 ) -> AsyncIterator[str]:
-    yield sse("meta", {
-        "conversation_id": pending.conversation_id,
-        "message_id": pending.assistant_message_id,
-    })
+    pending = turn.pending
     try:
-        while True:
-            while not next_item.done():
-                await asyncio.wait({next_item}, timeout=HEARTBEAT_SECONDS)
+        yield sse("meta", {
+            "conversation_id": pending.conversation_id,
+            "message_id": pending.assistant_message_id,
+        })
+        try:
+            while True:
+                while not next_item.done():
+                    await asyncio.wait({next_item}, timeout=HEARTBEAT_SECONDS)
+                    if not next_item.done():
+                        yield HEARTBEAT
+                item = next_item.result()
+                if isinstance(item, ModelResponse):
+                    break
+                yield sse("delta", {"text": item})
+                next_item = asyncio.ensure_future(anext(stream))
+        except ProviderError as exc:
+            turn.record_failure(exc.code, "failed")
+            yield sse("error", {"code": exc.code, "message": str(exc)})
+            return
+        except StopAsyncIteration:
+            turn.record_failure("provider_error", "failed")
+            yield sse("error", {"code": "provider_error", "message": "Reply ended without a final message."})
+            return
+        except Exception:
+            # A bug or an unexpected SDK error: tell the client instead of silently cutting the stream.
+            logger.exception("Unexpected error while streaming (conversation=%s)", pending.conversation_id)
+            turn.record_failure("internal_error", "failed")
+            yield sse("error", {"code": "internal_error", "message": "Something went wrong on the server."})
+            return
+        finally:
+            # Close the model stream even if the client disconnected (shielded from
+            # cancellation), so we stop paying for text nobody will read.
+            with anyio.CancelScope(shield=True):
                 if not next_item.done():
-                    yield HEARTBEAT
-            item = next_item.result()
-            if isinstance(item, ModelResponse):
-                break
-            yield sse("delta", {"text": item})
-            next_item = asyncio.ensure_future(anext(stream))
-    except ProviderError as exc:
-        log_turn(pending, status=exc.code)
-        yield sse("error", {"code": exc.code, "message": str(exc)})
-        return
-    except StopAsyncIteration:
-        log_turn(pending, status="provider_error")
-        yield sse("error", {"code": "provider_error", "message": "Reply ended without a final message."})
-        return
-    except Exception:
-        # A bug or an unexpected SDK error: tell the client instead of silently cutting the stream.
-        logger.exception("Unexpected error while streaming (conversation=%s)", pending.conversation_id)
-        log_turn(pending, status="internal_error")
-        yield sse("error", {"code": "internal_error", "message": "Something went wrong on the server."})
-        return
+                    next_item.cancel()
+                    try:
+                        await next_item
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                await stream.aclose()
+
+        reply = item
+        try:
+            turn.save(reply)
+        except sqlite3.Error:
+            logger.exception("Saving turn failed (conversation=%s)", pending.conversation_id)
+            turn.record_failure("save_failed", "failed")
+            yield sse("error", {"code": "save_failed", "message": "The reply couldn't be saved."})
+            return
+
+        cost = turn_cost(reply)
+        log_turn(pending, status="ok", usage=reply, cost=cost)
+        yield sse("done", {"usage": usage_event(reply, cost), "stop_reason": reply.stop_reason})
     finally:
-        # Close the model stream even if the client disconnected (shielded from
-        # cancellation), so we stop paying for text nobody will read.
+        # Anything that ends the turn without recording it (the browser disconnected,
+        # the server is shutting down) is an aborted turn; its spend is still saved.
         with anyio.CancelScope(shield=True):
-            if not next_item.done():
-                next_item.cancel()
-                try:
-                    await next_item
-                except (asyncio.CancelledError, Exception):
-                    pass
-            await stream.aclose()
-
-    reply = item
-    cost = cost_usd(reply.model, reply.input_tokens, reply.output_tokens)
-    try:
-        save(conn, pending, reply, prompt, provider_name, cost)
-    except sqlite3.Error:
-        logger.exception("Saving turn failed (conversation=%s)", pending.conversation_id)
-        log_turn(pending, status="save_failed", reply=reply, cost=cost)
-        yield sse("error", {"code": "save_failed", "message": "The reply couldn't be saved."})
-        return
-
-    log_turn(pending, status="ok", reply=reply, cost=cost)
-    yield sse("done", {
-        "usage": {
-            "model": reply.model,
-            "input_tokens": reply.input_tokens,
-            "output_tokens": reply.output_tokens,
-            "cost_usd": cost,
-        },
-        "stop_reason": reply.stop_reason,
-    })
-
-
-def save(
-    conn: sqlite3.Connection,
-    pending: PendingTurn,
-    reply: ModelResponse,
-    prompt: SystemPrompt,
-    provider_name: str,
-    cost: float | None,
-) -> None:
-    """Write the whole turn in one transaction (design.md §5)."""
-    db.save_turn(conn, db.Turn(
-        conversation_id=pending.conversation_id,
-        user_message_id=pending.user_message_id,
-        user_content=pending.user_content,
-        user_created_at=pending.user_created_at,
-        user_images=pending.user_images,
-        assistant_message_id=pending.assistant_message_id,
-        assistant_content=reply.text,
-        usage=db.UsageRecord(
-            provider=provider_name,
-            model=reply.model,
-            prompt_version=prompt.version,
-            input_tokens=reply.input_tokens,
-            output_tokens=reply.output_tokens,
-            cost_usd=cost,
-            latency_ms=elapsed_ms(pending),
-        ),
-    ))
+            turn.record_failure("aborted", "aborted")
 
 
 # --- Helpers -----------------------------------------------------------------
@@ -325,22 +363,52 @@ def elapsed_ms(pending: PendingTurn) -> int:
     return int((time.monotonic() - pending.started) * 1000)
 
 
-def log_turn(
-    pending: PendingTurn,
-    status: str,
-    reply: ModelResponse | None = None,
-    cost: float | None = None,
-) -> None:
+def turn_cost(usage: Usage) -> float | None:
+    """Everything the turn cost: tokens at their cache rates plus tool fees (design.md §9.1)."""
+    if usage.model is None:
+        return None
+    return cost_usd(
+        usage.model, usage.input_tokens, usage.output_tokens,
+        cache_read_tokens=usage.cache_read_tokens,
+        cache_write_5m_tokens=usage.cache_write_5m_tokens,
+        cache_write_1h_tokens=usage.cache_write_1h_tokens,
+        web_searches=usage.web_searches,
+        code_runs=usage.code_runs,
+    )
+
+
+def usage_event(reply: ModelResponse, cost: float | None) -> dict[str, Any]:
+    """`done.usage` (design.md §5). Cache writes are reported as one number (5m + 1h)."""
+    return {
+        "model": reply.model,
+        "input_tokens": reply.input_tokens,
+        "output_tokens": reply.output_tokens,
+        "cache_read_tokens": reply.cache_read_tokens,
+        "cache_write_tokens": reply.cache_write_5m_tokens + reply.cache_write_1h_tokens,
+        "web_searches": reply.web_searches,
+        "code_runs": reply.code_runs,
+        "cost_usd": cost,
+    }
+
+
+def log_turn(pending: PendingTurn, status: str, usage: Usage, cost: float | None = None) -> None:
     """One line per turn. Never logs message content, images, or keys (design.md §10)."""
     level = logging.INFO if status == "ok" else logging.WARNING
     logger.log(
         level,
-        "chat turn conversation=%s status=%s model=%s in=%s out=%s cost_usd=%s latency_ms=%d",
+        "chat turn conversation=%s status=%s mode=%s model=%s requests=%d in=%d out=%d "
+        "cache_read=%d cache_write=%d searches=%d code_runs=%d cost_usd=%s latency_ms=%d",
         pending.conversation_id,
         status,
-        reply.model if reply else "-",
-        reply.input_tokens if reply else "-",
-        reply.output_tokens if reply else "-",
+        pending.mode,
+        usage.model or "-",
+        usage.requests,
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.cache_read_tokens,
+        usage.cache_write_5m_tokens + usage.cache_write_1h_tokens,
+        usage.web_searches,
+        usage.code_runs,
         cost if cost is not None else "-",
         elapsed_ms(pending),
     )

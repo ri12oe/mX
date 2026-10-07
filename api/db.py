@@ -129,6 +129,12 @@ def save_turn(conn: sqlite3.Connection, turn: Turn, now: str | None = None) -> N
         _insert_usage(conn, turn.assistant_message_id, turn.usage, now)
 
 
+def save_spend(conn: sqlite3.Connection, usage: UsageRecord, now: str | None = None) -> None:
+    """A usage row with no message: what a failed or stopped turn cost (design.md §5)."""
+    with conn:
+        _insert_usage(conn, None, usage, now or now_iso())
+
+
 def _insert_message(
     conn: sqlite3.Connection, message_id: str, conversation_id: str,
     role: str, content: str, created_at: str, image_refs: list[str] | None = None,

@@ -12,6 +12,7 @@ from api import chat as chat_module
 from api import db
 from api.config import settings
 from api.main import app, get_db, get_provider
+from providers.base import UsageMeter
 from providers.errors import (
     ProviderAuthError,
     ProviderRateLimitError,
@@ -86,6 +87,7 @@ def test_new_conversation_streams_meta_deltas_done(client: TestClient):
     done = events[-1][1]
     assert done["usage"] == {
         "model": "claude-opus-5-5", "input_tokens": 500, "output_tokens": 40,
+        "cache_read_tokens": 0, "cache_write_tokens": 0, "web_searches": 0, "code_runs": 0,
         "cost_usd": pytest.approx(0.0028),  # 500 × $4/M + 40 × $20/M
     }
     assert done["stop_reason"] == "end_turn"
@@ -126,6 +128,7 @@ def test_provider_gets_system_prompt_and_normal_mode_options(client: TestClient,
     text = system_text(call)
     assert text.startswith("You are mX") and "Mode: normal" in text
     assert "<!--" not in text
+    assert isinstance(call.opts.pop("meter"), UsageMeter)
     assert call.opts == {"max_tokens": 16000, "effort": "high", **CACHE_OPTS}
     assert [(m.role, m.content) for m in call.messages] == [("user", "What is 4 times 3?")]
 
@@ -134,6 +137,7 @@ def test_brief_mode_uses_brief_prompt_and_options(client: TestClient, fake: Fake
     post_chat(client, mode="brief")
     call = fake.calls[0]
     assert "Mode: brief" in system_text(call)
+    call.opts.pop("meter")
     assert call.opts == {"max_tokens": 2048, "effort": "low", **CACHE_OPTS}
 
 
@@ -301,9 +305,10 @@ def test_failure_before_text_is_http_error(
 # --- Failures after streaming started: error event, nothing saved ------------
 
 
-def test_mid_stream_failure_sends_error_event_and_saves_nothing(
+def test_mid_stream_failure_saves_no_content_but_records_the_spend(
     client: TestClient, conn: sqlite3.Connection, fake: FakeProvider,
 ):
+    """Design §5: no half turns in history, but the tokens already paid for count toward the budget."""
     fake.chunks = ["a", "b", "c"]
     fake.error, fake.fail_after = ProviderUnavailableError("connection lost"), 2
     r = post_chat(client)
@@ -312,8 +317,51 @@ def test_mid_stream_failure_sends_error_event_and_saves_nothing(
     events = parse_sse(r.text)
     assert [name for name, _ in events] == ["meta", "delta", "delta", "error"]
     assert events[-1][1]["code"] == "provider_unavailable"
-    for table in ("conversations", "messages", "usage"):
+    for table in ("conversations", "messages"):
         assert count(conn, table) == 0
+    rows = conn.execute("SELECT * FROM usage").fetchall()
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["status"], row["message_id"], row["mode"], row["requests"]) == ("failed", None, "normal", 1)
+    assert (row["input_tokens"], row["output_tokens"]) == (500, 0)  # input side metered, no output yet
+    assert row["cost_usd"] == pytest.approx(500 * 4 / 1e6)
+
+
+def test_failure_before_any_request_records_nothing(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
+    """E.g. a bad API key: rejected before the model ran, so nothing was spent."""
+    fake.error = ProviderAuthError("bad key")
+    assert post_chat(client).status_code == 502
+    assert count(conn, "usage") == 0
+
+
+def test_successful_turn_saves_mode_status_cache_and_tool_counters(
+    client: TestClient, conn: sqlite3.Connection, fake: FakeProvider,
+):
+    fake.cache_read_tokens, fake.cache_write_5m_tokens = 6000, 1200
+    done = parse_sse(post_chat(client, mode="brief").text)[-1][1]
+
+    expected_cost = (500 * 4 + 40 * 20 + 6000 * 0.20 + 1200 * 5) / 1e6
+    assert done["usage"] == {
+        "model": "claude-opus-5-5", "input_tokens": 500, "output_tokens": 40,
+        "cache_read_tokens": 6000, "cache_write_tokens": 1200, "web_searches": 0, "code_runs": 0,
+        "cost_usd": pytest.approx(expected_cost),
+    }
+    row = conn.execute("SELECT * FROM usage").fetchone()
+    assert (row["status"], row["mode"], row["requests"]) == ("ok", "brief", 1)
+    assert (row["cache_read_tokens"], row["cache_write_5m_tokens"], row["cache_write_1h_tokens"]) == (6000, 1200, 0)
+    assert row["message_id"] is not None
+    assert row["cost_usd"] == pytest.approx(expected_cost)
+
+
+def test_log_line_has_counters_but_no_content(client: TestClient, fake: FakeProvider, caplog: pytest.LogCaptureFixture):
+    fake.cache_read_tokens = 6000
+    with caplog.at_level(logging.INFO, logger="mx.chat"):
+        post_chat(client, message="my secret question")
+    line = next(r.getMessage() for r in caplog.records if "chat turn" in r.getMessage())
+    for part in ("status=ok", "mode=normal", "requests=1", "in=500", "out=40", "cache_read=6000",
+                 "cache_write=0", "searches=0", "code_runs=0"):
+        assert part in line
+    assert "secret" not in caplog.text
 
 
 def test_unrescued_refusal_mid_stream_is_discarded(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
@@ -324,13 +372,31 @@ def test_unrescued_refusal_mid_stream_is_discarded(client: TestClient, conn: sql
     assert count(conn, "messages") == 0
 
 
-def test_save_failure_sends_error_event(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+def test_save_failure_sends_error_event_and_still_records_the_spend(
+    client: TestClient, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch,
+):
     def broken_save(*args: Any, **kwargs: Any) -> None:
         raise sqlite3.OperationalError("disk full")
 
     monkeypatch.setattr(db, "save_turn", broken_save)
     events = parse_sse(post_chat(client).text)
     assert events[-1][0] == "error" and events[-1][1]["code"] == "save_failed"
+    row = conn.execute("SELECT status, message_id, output_tokens FROM usage").fetchone()
+    assert tuple(row) == ("failed", None, 40)  # the whole reply was paid for
+
+
+def test_spend_save_failure_is_logged_not_raised(
+    client: TestClient, conn: sqlite3.Connection, fake: FakeProvider,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+):
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise sqlite3.OperationalError("disk full")
+
+    monkeypatch.setattr(db, "save_spend", broken)
+    fake.error, fake.fail_after = ProviderUnavailableError("lost"), 1
+    events = parse_sse(post_chat(client).text)
+    assert events[-1][1]["code"] == "provider_unavailable"  # the user still sees the real error
+    assert "Saving the spend of a failed turn failed" in caplog.text
 
 
 # --- Logging -----------------------------------------------------------------
