@@ -153,7 +153,7 @@ Phase 2 endpoints:
 
 | Event | Data | When |
 |---|---|---|
-| `meta` | `{conversation_id, message_id, mode, tools, budget}` | First, before any text. **Phase 2:** `mode`/`tools` are what the server actually applies (the budget guard may force `brief` and tools off); `budget` = `{state, spent_usd, limit_usd, forced}` |
+| `meta` | `{conversation_id, message_id, mode, tools, budget}` | First, before any text. **Phase 2:** `mode`/`tools` are what the server actually applies (the budget guard may force `brief` and tools off); `budget` = `{state, spent_usd, limit_usd, resets_at, forced}` (`resets_at` lets the banner say when brief mode ends) |
 | `delta` | `{text}` | Each text chunk |
 | ✚ `tool_start` | `{step_id, tool, input}` | A tool call begins. `tool`: `web_search` \| `code_execution`. `input`: `{query}` or `{code}` (code truncated to 8,000 chars) |
 | ✚ `tool_end` | `{step_id, tool, status, error_code?, output}` | It finished. `status`: `ok` \| `error`. `output`: web search → `{sources: [{url, title}]}` (max 10); code → `{stdout, stderr, return_code}` (each truncated to 4,000 chars) |

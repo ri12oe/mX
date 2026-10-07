@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from api import chat as chat_module
 from api import db
 from api.main import app, get_db, get_provider
+from api.budget import budget_status
 from api.prompts import SystemPrompt
 from providers.base import ModelResponse
 from providers.errors import ProviderUnavailableError
@@ -97,7 +98,8 @@ def disconnect_mid_think(conn: sqlite3.Connection, started_request: bool) -> asy
     async def scenario() -> None:
         stream = never_answers()
         next_item = asyncio.ensure_future(anext(stream))
-        turn = chat_module.TurnContext(pending, SystemPrompt("x", "mx_system_v3"), "anthropic", conn)
+        policy = chat_module.TurnPolicy("normal", True, False, budget_status(conn, 20.0))
+        turn = chat_module.TurnContext(pending, SystemPrompt("x", "mx_system_v3"), "anthropic", conn, policy)
         events = chat_module.stream_events(stream, next_item, turn)
         assert (await anext(events)).startswith("event: meta")
         assert await anext(events) == chat_module.HEARTBEAT
