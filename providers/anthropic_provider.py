@@ -410,11 +410,18 @@ def combine_responses(responses: list[BetaMessage], cache_ttl: str = "5m") -> Mo
     for response in responses:
         for name, value in usage_counts(response.usage, cache_ttl).items():
             usage[name] += value
+    steps = tracker.final_steps()
+    # usage.server_tool_use is the source of truth; when it doesn't report a tool, count its steps
+    # (design.md §9.1). Searches that error aren't billed, so only finished searches count.
+    if not usage["code_runs"]:
+        usage["code_runs"] = sum(s.tool == "code_execution" for s in steps)
+    if not usage["web_searches"]:
+        usage["web_searches"] = sum(s.tool == "web_search" and s.status == "ok" for s in steps)
     return ModelResponse(
         text=visible_text(blocks),
         model=last.model,
         stop_reason=last.stop_reason or "end_turn",
-        tool_steps=tracker.final_steps(),
+        tool_steps=steps,
         citations=citations_of(blocks),
         requests=len(responses),
         **usage,

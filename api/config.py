@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     cache_ttl: Literal["5m", "1h"] = "5m"
     # Monthly API budget for /chat (design.md §16): warning at 80%, brief mode at 100%.
     monthly_budget_usd: float = 20.0
+    # Master switch for tools (design.md §17). False: no tools are declared at all.
+    tools_enabled: bool = True
 
     @field_validator("monthly_budget_usd")
     @classmethod

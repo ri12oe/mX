@@ -29,7 +29,7 @@ from api.images import ImageError, decode_images
 from api.pricing import cost_usd
 from api.prompts import MODE_OPTIONS, Mode, SystemPrompt, load_system_prompt
 from providers import ModelProvider
-from providers.base import ImageData, Message, ModelResponse, SystemPart, ToolStep, UsageMeter
+from providers.base import ImageData, Message, ModelResponse, SystemPart, ToolOptions, ToolStep, UsageMeter
 from providers.errors import (
     ProviderError,
     ProviderRateLimitError,
@@ -50,6 +50,7 @@ FIRST_ITEM_WAIT_SECONDS = 10.0  # quick failures within this become HTTP errors
 HEARTBEAT_SECONDS = 15.0  # comment line sent while waiting for the model
 HEARTBEAT = ": ping\n\n"
 SERVER_TOOLS = frozenset({"code_execution", "web_search"})  # shown as tool_start/tool_end and saved
+WEB_SEARCH_MAX_USES = 5  # becomes the WEB_SEARCH_MAX_USES setting when web search is switched on (task 16)
 
 
 class ChatRequest(BaseModel):
@@ -64,6 +65,7 @@ class ChatRequest(BaseModel):
         default=False,
         description="When this month's budget is used up, run this one message with the requested mode anyway.",
     )
+    tools: bool = Field(default=True, description="False = the composer's Tools toggle is off for this message.")
 
     @field_validator("message")
     @classmethod
@@ -103,10 +105,24 @@ class TurnPolicy:
 
 
 def apply_budget(conn: sqlite3.Connection, req: ChatRequest) -> TurnPolicy:
-    """At 100% of the month's budget: brief mode, tools off, unless the request overrides it."""
+    """At 100% of the month's budget: brief mode, tools off, unless the request overrides it.
+
+    Tools run only when the server allows them (TOOLS_ENABLED), the message asks for
+    them (the composer toggle), and the budget isn't forcing brief mode.
+    """
     status = budget_status(conn, settings.monthly_budget_usd)
     forced = status.state == "brief" and not req.budget_override
-    return TurnPolicy(mode="brief" if forced else req.mode, tools=not forced, forced=forced, budget=status)
+    tools = settings.tools_enabled and req.tools and not forced
+    return TurnPolicy(mode="brief" if forced else req.mode, tools=tools, forced=forced, budget=status)
+
+
+def tool_options(policy: TurnPolicy) -> ToolOptions | None:
+    """What the provider declares (design.md §17). None when tools are switched off server-wide;
+    otherwise the same definitions every time, with `enabled` saying whether they may be used."""
+    if not settings.tools_enabled:
+        return None
+    return ToolOptions(enabled=policy.tools, code_execution=True, web_search=False,
+                       web_search_max_uses=WEB_SEARCH_MAX_USES)
 
 
 def budget_event(status: BudgetStatus, forced: bool) -> dict[str, Any]:
@@ -135,8 +151,8 @@ async def chat(
     pending = start_turn(conn, req, policy.mode)
     prompt = load_system_prompt(policy.mode, settings.system_prompt_file)
     stream = provider.stream(
-        pending.history, build_system(prompt), cache_messages=True,
-        cache_ttl=settings.cache_ttl, meter=pending.meter, **MODE_OPTIONS[policy.mode],
+        pending.history, build_system(prompt), cache_messages=True, cache_ttl=settings.cache_ttl,
+        meter=pending.meter, tools=tool_options(policy), **MODE_OPTIONS[policy.mode],
     )
     next_item = asyncio.ensure_future(anext(stream))
     turn = TurnContext(pending, prompt, provider.name, conn, policy)

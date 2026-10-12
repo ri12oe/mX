@@ -90,6 +90,7 @@ def whoami() -> dict:
         "provider": settings.primary_provider,
         "model": settings.primary_model,
         "provider_key_set": bool(settings.anthropic_api_key),
+        "tools_enabled": settings.tools_enabled,  # the web app hides the Tools toggle when false
     }
 
 

@@ -189,3 +189,20 @@ def test_generate_reports_steps_citations_and_paragraph_breaks():
     assert reply.text == "Searching.\n\n" + CITED_TEXT["text"]
     assert [s.status for s in reply.tool_steps] == ["ok"]
     assert reply.citations == [Citation("https://www.python.org/downloads/", "Python downloads")]
+
+
+def test_code_runs_and_searches_are_counted_from_steps_when_usage_omits_them():
+    """design.md §9.1: usage.server_tool_use is preferred; otherwise count the steps."""
+    failed_search = {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_3",
+                     "content": {"type": "web_search_tool_result_error", "error_code": "unavailable"}}
+    final = message_with(CODE_USE, CODE_RESULT, SEARCH_USE, SEARCH_RESULT,
+                         {**SEARCH_USE, "id": "srvtoolu_3"}, failed_search)
+    reply = asyncio.run(provider_with(final)[0].generate(HISTORY, "sys", tools=ALL_TOOLS))
+    assert (reply.code_runs, reply.web_searches) == (1, 1)  # the failed search isn't billed
+
+
+def test_usage_counts_win_over_counting_steps():
+    final = message_with(SEARCH_USE, SEARCH_RESULT, usage={"input_tokens": 1, "output_tokens": 1,
+                                                          "server_tool_use": {"web_search_requests": 3, "web_fetch_requests": 0}})
+    reply = asyncio.run(provider_with(final)[0].generate(HISTORY, "sys", tools=ALL_TOOLS))
+    assert reply.web_searches == 3

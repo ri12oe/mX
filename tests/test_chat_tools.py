@@ -1,5 +1,6 @@
 """Tool steps through /chat: SSE events, paragraph breaks, saving (design.md §5, §6.1). FakeProvider, no cost."""
 import asyncio
+import json
 import sqlite3
 from collections.abc import Iterator
 from typing import Any
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from api import chat as chat_module
 from api import db
+from api.config import settings
 from api.main import app, get_db, get_provider
 from providers.base import Citation, ModelResponse, ToolStep
 from providers.errors import ProviderUnavailableError
@@ -158,3 +160,63 @@ def test_a_tool_event_counts_as_the_first_item_for_fail_fast(conn: sqlite3.Conne
     assert r.status_code == 200
     assert r.text.index("event: tool_start") < r.text.index(": ping") < r.text.index("event: tool_end")
     assert [name for name, _ in parse_sse(r.text)] == ["meta", "tool_start", "tool_end", "delta", "done"]
+
+
+# --- Code execution switched on (task 14) -------------------------------------
+
+
+def test_code_execution_is_offered_by_default(client: TestClient, fake: FakeProvider):
+    meta = chat(client)[0][1]
+    tools = fake.calls[0].opts["tools"]
+    assert (tools.enabled, tools.code_execution, tools.web_search) == (True, True, False)  # search: task 16
+    assert meta["tools"] is True
+
+
+def test_toggle_off_keeps_the_definitions_but_disables_them(client: TestClient, fake: FakeProvider):
+    """Same definitions as with the toggle on, so the cache holds (design.md §15)."""
+    meta = chat(client, tools=False)[0][1]
+    tools = fake.calls[0].opts["tools"]
+    assert (tools.enabled, tools.code_execution) == (False, True)
+    assert meta["tools"] is False
+
+
+def test_budget_brief_mode_turns_tools_off(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
+    db.save_spend(conn, db.UsageRecord("anthropic", "claude-opus-5-5", "v", 1, 1, 25.0, 1))
+    meta = chat(client)[0][1]
+    assert (meta["mode"], meta["tools"]) == ("brief", False)
+    assert fake.calls[0].opts["tools"].enabled is False
+
+
+def test_tools_disabled_server_wide_declares_nothing(client: TestClient, fake: FakeProvider, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "tools_enabled", False)
+    meta = chat(client)[0][1]
+    assert fake.calls[0].opts["tools"] is None
+    assert meta["tools"] is False
+    assert client.get("/whoami", headers=HEADERS).json()["tools_enabled"] is False
+
+
+def test_whoami_reports_tools_enabled(client: TestClient):
+    assert client.get("/whoami", headers=HEADERS).json()["tools_enabled"] is True
+
+
+@pytest.mark.parametrize(
+    ("ended", "expected"),
+    [
+        (RAN, ("ok", None, 0)),
+        (ToolStep("t1", "code_execution", "ok", {"code": CODE},
+                  {"stdout": "", "stderr": "ZeroDivisionError: division by zero", "return_code": 1}), ("ok", None, 1)),
+        (ToolStep("t1", "code_execution", "error", {"code": CODE}, None, "execution_time_exceeded"),
+         ("error", "execution_time_exceeded", None)),
+    ],
+    ids=["success", "non-zero exit", "tool error"],
+)
+def test_code_runs_are_saved_and_counted(
+    client: TestClient, conn: sqlite3.Connection, fake: FakeProvider, ended: ToolStep, expected: tuple,
+):
+    fake.script = [RUN, ended, "Here's what happened."]
+    done = chat(client)[-1][1]
+    step = conn.execute("SELECT status, error_code, output FROM tool_steps").fetchone()
+    return_code = None if step["output"] is None else json.loads(step["output"])["return_code"]
+    assert (step["status"], step["error_code"], return_code) == expected
+    assert done["usage"]["code_runs"] == 1
+    assert conn.execute("SELECT code_runs FROM usage").fetchone()[0] == 1

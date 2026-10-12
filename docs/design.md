@@ -377,7 +377,7 @@ Phase 2 settings:
 |---|---|---|
 | `SYSTEM_PROMPT_FILE` | `prompts/mx_system_v4.md` once v4 is adopted (W3) | unchanged meaning |
 | `MONTHLY_BUDGET_USD` | `20` | Budget guard limit (§16). Must be > 0 |
-| `TOOLS_ENABLED` | `true` | Master switch. `false` = tools are not declared at all (the composer toggle is hidden) |
+| `TOOLS_ENABLED` | `true` | Master switch. `false` = tools are not declared at all (the composer toggle is hidden; `/whoami` reports `tools_enabled`) |
 | `WEB_SEARCH_MAX_USES` | `5` | Max searches per API request (VERIFY the tool's `max_uses` field) |
 | `CACHE_TTL` | `5m` | `5m` or `1h` for mX's cache breakpoints (§15) |
 
