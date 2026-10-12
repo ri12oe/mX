@@ -3,9 +3,9 @@
 The API layer only talks to `ModelProvider`; SDKs are used only inside
 provider adapters such as providers/anthropic_provider.py.
 """
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,57 @@ class SystemPart:
     cache: bool = False  # put a prompt-cache breakpoint after this part (§15)
 
 
+@dataclass(frozen=True)
+class ClientToolResult:
+    text: str  # sent back to the model as the tool_result
+    is_error: bool = False
+
+
+@dataclass(frozen=True)
+class ClientTool:
+    """A tool mX runs itself (Phase 2: only propose_memory, design.md §18)."""
+
+    name: str
+    description: str  # loaded from prompts/tools/, never hardcoded
+    input_schema: dict[str, Any]
+    run: Callable[[dict[str, Any]], ClientToolResult]  # sync, fast, no network
+
+
+@dataclass(frozen=True)
+class ToolOptions:
+    """Which tools a request may use (design.md §17)."""
+
+    enabled: bool  # False: tools stay declared (cache-friendly) but the model may not call any
+    code_execution: bool
+    web_search: bool
+    web_search_max_uses: int
+    client_tools: tuple[ClientTool, ...] = ()
+
+
+ToolStatus = Literal["running", "ok", "error"]
+
+
+@dataclass
+class ToolStep:
+    """A tool step, yielded by `stream` when it starts (status "running") and again when it ends.
+
+    Both yields carry the same `id`; the second has the final status and output.
+    """
+
+    id: str
+    tool: str  # "code_execution" | "web_search" | a client tool name
+    status: ToolStatus
+    input: dict[str, Any]  # {"query"} | {"code"} | the client tool's input
+    output: dict[str, Any] | None = None  # {sources} | {stdout, stderr, return_code} | client result
+    error_code: str | None = None
+
+
+@dataclass(frozen=True)
+class Citation:
+    url: str
+    title: str
+
+
 @dataclass
 class ModelResponse:
     text: str
@@ -42,6 +93,8 @@ class ModelResponse:
     web_searches: int = 0
     code_runs: int = 0
     requests: int = 1  # API requests behind this reply
+    tool_steps: list[ToolStep] = field(default_factory=list)  # final state of each step, in order
+    citations: list[Citation] = field(default_factory=list)  # sources the answer cited
 
 
 @dataclass
@@ -79,8 +132,8 @@ class ModelProvider(Protocol):
 
     def stream(
         self, messages: list[Message], system: SystemPrompt, **opts: Any
-    ) -> AsyncIterator[str | ModelResponse]:
-        """Yield the reply as `str` chunks, then exactly one final `ModelResponse`.
+    ) -> AsyncIterator[str | ToolStep | ModelResponse]:
+        """Yield the reply as `str` chunks (and `ToolStep`s when tools run), then exactly one final `ModelResponse`.
 
         The final item carries the full text and token counts, so cost can be
         logged for streamed replies too. Nothing is yielded after it.
