@@ -11,8 +11,8 @@ import { Core, type CoreState } from "./components/Core";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { OrbitDial } from "./components/OrbitDial";
 import { StatusPanel, type SessionStats } from "./components/StatusPanel";
-import { loadMode, saveMode } from "./settings";
-import type { Budget, ChatEvent, ConversationSummary, Mode, StoredMessage, UiMessage, Usage } from "./types";
+import { loadMode, loadTools, saveMode, saveTools } from "./settings";
+import type { Budget, ChatEvent, ConversationSummary, Mode, StoredMessage, ToolStep, UiMessage, Usage } from "./types";
 
 const SUGGESTIONS = [
   "Explain integration by parts with a worked example",
@@ -25,7 +25,18 @@ let tempCounter = 0;
 const tempId = () => `local-${++tempCounter}`;
 
 function fromStored(m: StoredMessage): UiMessage {
-  return { id: m.id, role: m.role, content: m.content, images: [], imageRefs: m.image_refs };
+  const steps = (m.tool_steps ?? []).map(({ seq: _seq, ...step }) => step);
+  return {
+    id: m.id, role: m.role, content: m.content, images: [], imageRefs: m.image_refs,
+    ...(steps.length ? { steps } : {}),
+    ...(m.citations?.length ? { citations: m.citations } : {}),
+  };
+}
+
+/** Add a step when it starts; replace it with its final state when it ends. */
+function withStep(steps: ToolStep[] | undefined, step: ToolStep): ToolStep[] {
+  const list = steps ?? [];
+  return list.some((s) => s.id === step.id) ? list.map((s) => (s.id === step.id ? step : s)) : [...list, step];
 }
 
 type Auth = "checking" | "signed-in" | "signed-out";
@@ -36,6 +47,8 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [mode, setMode] = useState<Mode>(loadMode);
+  const [tools, setTools] = useState<boolean>(loadTools);
+  const [toolsAvailable, setToolsAvailable] = useState(true); // false when TOOLS_ENABLED=false on the server
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
@@ -64,6 +77,7 @@ export default function App() {
     whoami()
       .then((info) => {
         setModel(info.model);
+        setToolsAvailable(info.tools_enabled !== false);
         setAuth("signed-in");
       })
       .catch((err: unknown) => {
@@ -78,7 +92,12 @@ export default function App() {
   // After signing in from the login screen, learn which model is answering (for the HUD).
   useEffect(() => {
     if (auth === "signed-in" && model === null) {
-      whoami().then((info) => setModel(info.model)).catch(() => {});
+      whoami()
+        .then((info) => {
+          setModel(info.model);
+          setToolsAvailable(info.tools_enabled !== false);
+        })
+        .catch(() => {});
     }
   }, [auth, model]);
 
@@ -161,6 +180,11 @@ export default function App() {
     saveMode(next);
   }
 
+  function changeTools(on: boolean) {
+    setTools(on);
+    saveTools(on);
+  }
+
   async function send(text: string, images: string[]) {
     const assistantId = tempId();
     const update = (patch: (m: UiMessage) => Partial<UiMessage>) =>
@@ -194,8 +218,23 @@ export default function App() {
         case "delta":
           update((m) => ({ content: m.content + event.text }));
           break;
+        case "tool_start":
+          update((m) => ({ steps: withStep(m.steps, { id: event.step_id, tool: event.tool, status: "running", input: event.input }) }));
+          break;
+        case "tool_end":
+          update((m) => {
+            const started = m.steps?.find((s) => s.id === event.step_id);
+            return { steps: withStep(m.steps, {
+              id: event.step_id, tool: event.tool, status: event.status, input: started?.input ?? {},
+              output: event.output, error_code: event.error_code,
+            }) };
+          });
+          break;
         case "done":
-          update(() => ({ streaming: false, usage: event.usage, stopReason: event.stop_reason }));
+          update(() => ({
+            streaming: false, usage: event.usage, stopReason: event.stop_reason,
+            ...(event.citations?.length ? { citations: event.citations } : {}),
+          }));
           setActiveId(conversationId);
           setLastUsage(event.usage);
           if (event.budget) setBudget(event.budget);
@@ -220,6 +259,7 @@ export default function App() {
           conversation_id: activeId ?? undefined,
           images: images.length ? images : undefined,
           ...(budgetOverride ? { budget_override: true } : {}),
+          ...(toolsAvailable && !tools ? { tools: false } : {}),
         },
         onEvent,
         controller.signal,
@@ -327,6 +367,8 @@ export default function App() {
             onTextChange={setDraft}
             mode={mode}
             onModeChange={changeMode}
+            tools={tools}
+            onToolsChange={toolsAvailable ? changeTools : undefined}
             streaming={streaming}
             onSend={(text, images) => void send(text, images)}
             onStop={stop}
@@ -371,10 +413,14 @@ export default function App() {
   );
 }
 
-/** What the core shows: thinking before the first words, responding while they stream, fault after an error. */
+/** What the core shows: thinking before the first words and while a tool runs, responding while
+ * words stream, fault after an error. */
 export function coreStateFor(messages: UiMessage[], streaming: boolean): CoreState {
   const last = messages[messages.length - 1];
-  if (streaming) return last?.role === "assistant" && last.content ? "streaming" : "thinking";
+  if (streaming) {
+    const toolRunning = last?.steps?.some((s) => s.status === "running");
+    return last?.role === "assistant" && last.content && !toolRunning ? "streaming" : "thinking";
+  }
   if (last?.role === "assistant" && last.error) return "error";
   return "idle";
 }

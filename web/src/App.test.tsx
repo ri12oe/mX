@@ -15,6 +15,8 @@ interface FakeApi {
   deleted: string[];
   loggedOut: boolean;
   budget: { state: string; spent_usd: number; limit_usd: number; resets_at: string; month: string };
+  storedSteps: unknown[]; // tool_steps on the stored assistant message
+  toolsEnabled: boolean; // /whoami tools_enabled
 }
 
 let api: FakeApi;
@@ -40,6 +42,7 @@ function installFakeApi(signedIn: boolean) {
   api = {
     signedIn, conversations: [], deleted: [], loggedOut: false, chat: () => new Response(null, { status: 500 }),
     budget: { state: "ok", spent_usd: 1.5, limit_usd: 20, resets_at: "2026-11-01T00:00:00-04:00", month: "2026-10" },
+    storedSteps: [], toolsEnabled: true,
   };
   vi.stubGlobal(
     "fetch",
@@ -57,7 +60,7 @@ function installFakeApi(signedIn: boolean) {
         return new Response(null, { status: 204 });
       }
       if (!api.signedIn) return json({ detail: "Not signed in" }, 401);
-      if (path === "/whoami") return json({ model: "claude-opus-5-5" });
+      if (path === "/whoami") return json({ model: "claude-opus-5-5", tools_enabled: api.toolsEnabled });
       if (path === "/usage/budget") return json(api.budget);
       if (path.startsWith("/conversations?")) return json(api.conversations);
       if (path === "/chat") return api.chat(init);
@@ -72,7 +75,8 @@ function installFakeApi(signedIn: boolean) {
           ...api.conversations[0],
           messages: [
             { id: "u1", role: "user", content: "Earlier question", image_refs: [], created_at: "" },
-            { id: "a1", role: "assistant", content: "Earlier **answer**", image_refs: [], created_at: "" },
+            { id: "a1", role: "assistant", content: "Earlier **answer**", image_refs: [], created_at: "",
+              tool_steps: api.storedSteps, citations: [] },
           ],
         });
       }
@@ -100,6 +104,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  localStorage.clear(); // e.g. the Tools toggle, so one test can't change the next
 });
 
 describe("signing in", () => {
@@ -305,6 +310,59 @@ describe("chatting", () => {
     await within(month).findByText("$1.50 / $20.00");
     send("Hello");
     await within(month).findByText("$1.75 / $20.00");
+  });
+
+  it("shows a code run live: running, then done, then the answer", async () => {
+    api.chat = () => streamResponse([sse([
+      ["meta", { conversation_id: "c1", message_id: "m1" }],
+      ["delta", { text: "Let me compute that." }],
+      ["tool_start", { step_id: "t1", tool: "code_execution", input: { code: "print(2**100)" } }],
+    ]), sse([
+      ["tool_end", { step_id: "t1", tool: "code_execution", status: "ok", error_code: null,
+        output: { stdout: "1267650600228229401496703205376\n", stderr: "", return_code: 0 } }],
+      ["delta", { text: "\n\nIt is 1267650600228229401496703205376." }],
+      ["done", { usage: { model: "m", input_tokens: 1, output_tokens: 1, cost_usd: 0.01, code_runs: 1 }, stop_reason: "end_turn" }],
+    ])]);
+    await renderSignedIn();
+    send("Compute 2^100");
+    const chip = await screen.findByText("Ran code");
+    fireEvent.click(chip);
+    expect(chip.closest("details")!.querySelectorAll("pre")[0].textContent).toBe("print(2**100)");
+    await screen.findByText(/It is 1267650600228229401496703205376/);
+  });
+
+  it("reopening a chat shows its stored steps", async () => {
+    api.conversations = [{ id: "c1", title: "Old chat", created_at: "", updated_at: new Date().toISOString() }];
+    api.storedSteps = [{ id: "t1", seq: 0, tool: "code_execution", status: "error", input: { code: "while True: pass" },
+      output: null, error_code: "execution_time_exceeded" }];
+    render(<App />);
+    fireEvent.click(await screen.findByText("Old chat"));
+    expect(await screen.findByText("Code failed: time limit reached")).toBeTruthy();
+  });
+
+  it("the Tools toggle sends tools: false and is remembered", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    api.chat = (init) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return streamResponse([sse([["meta", { conversation_id: "c1", message_id: "m1" }], ["delta", { text: "ok" }],
+        ["done", { usage: { model: "m", input_tokens: 1, output_tokens: 1, cost_usd: 0 }, stop_reason: "end_turn" }]])]);
+    };
+    await renderSignedIn();
+    fireEvent.click(screen.getByRole("button", { name: /Tools on/ }));
+    send("No tools please");
+    await screen.findByText("ok");
+    expect(bodies[0].tools).toBe(false);
+    expect(localStorage.getItem("mx.tools")).toBe("off");
+
+    cleanup();
+    await renderSignedIn();
+    expect(screen.getByRole("button", { name: /Tools off/ }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("hides the Tools toggle when the server has tools switched off", async () => {
+    api.toolsEnabled = false;
+    await renderSignedIn();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Tools/ })).toBeNull());
   });
 
   it("fills the composer from a suggestion without sending", async () => {

@@ -7,12 +7,16 @@ interface Props {
   onTextChange: (text: string) => void;
   mode: Mode;
   onModeChange: (mode: Mode) => void;
+  tools?: boolean; // the Tools toggle (design.md §17)
+  onToolsChange?: (on: boolean) => void; // omit to hide the toggle (tools off server-wide)
   streaming: boolean;
   onSend: (text: string, images: string[]) => void;
   onStop: () => void;
 }
 
-export function Composer({ text, onTextChange, mode, onModeChange, streaming, onSend, onStop }: Props) {
+export function Composer({
+  text, onTextChange, mode, onModeChange, tools = true, onToolsChange, streaming, onSend, onStop,
+}: Props) {
   const [images, setImages] = useState<string[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -159,6 +163,17 @@ export function Composer({ text, onTextChange, mode, onModeChange, streaming, on
               </button>
             ))}
           </div>
+          {onToolsChange && (
+            <button
+              type="button"
+              className={`tools-toggle${tools ? " active" : ""}`}
+              aria-pressed={tools}
+              onClick={() => onToolsChange(!tools)}
+              title={tools ? "Tools on: mX may run code when it helps" : "Tools off: mX answers without running code"}
+            >
+              <span aria-hidden="true">›_</span> <span className="tools-toggle-label">Tools {tools ? "on" : "off"}</span>
+            </button>
+          )}
         </div>
 
         {streaming ? (

@@ -1,6 +1,7 @@
 import type { UiMessage, Usage } from "../types";
 import { Markdown } from "./Markdown";
 import { StoredImage } from "./StoredImage";
+import { ToolSteps } from "./ToolSteps";
 
 export function MessageView({ message }: { message: UiMessage }) {
   const hasImages = message.images.length > 0 || message.imageRefs.length > 0;
@@ -26,12 +27,14 @@ export function MessageView({ message }: { message: UiMessage }) {
     );
   }
 
-  const waiting = message.streaming && !message.content;
+  const steps = message.steps ?? [];
+  const waiting = message.streaming && !message.content && !steps.some((s) => s.status === "running");
   return (
     <div className="msg msg-assistant">
       <div className="avatar" aria-hidden="true">mX</div>
       <div className="assistant-body">
-        {waiting ? (
+        <ToolSteps steps={steps} />
+        {!message.content && !waiting ? null : waiting ? (
           <div className="thinking" aria-label="mX is thinking">
             <span /><span /><span />
           </div>
@@ -41,6 +44,9 @@ export function MessageView({ message }: { message: UiMessage }) {
         {message.streaming && message.content && <span className="caret" aria-hidden="true" />}
         {message.stopReason === "max_tokens" && (
           <div className="note warn">This reply hit its length limit and was cut off.</div>
+        )}
+        {message.stopReason === "pause_turn" && (
+          <div className="note warn">mX used its tools for a long time and stopped here; the answer may be incomplete.</div>
         )}
         {message.error && <div className="note error">{message.error}</div>}
         {message.usage && <UsageLine usage={message.usage} />}

@@ -9,12 +9,42 @@ export interface ConversationSummary {
   updated_at: string;
 }
 
+/** A web source an answer cited (design.md §17). */
+export interface Citation {
+  url: string;
+  title: string;
+}
+
+/** One tool step behind an answer: a code run or a web search (design.md §5, §17). */
+export interface ToolStep {
+  id: string;
+  tool: string; // "code_execution" | "web_search"
+  status: "running" | "ok" | "error";
+  input: {
+    code?: string;
+    language?: string; // "bash" | "file" when not Python
+    code_truncated?: boolean;
+    query?: string;
+  };
+  output?: {
+    stdout?: string;
+    stderr?: string;
+    return_code?: number;
+    stdout_truncated?: boolean;
+    stderr_truncated?: boolean;
+    sources?: Citation[];
+  } | null;
+  error_code?: string | null;
+}
+
 export interface StoredMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   image_refs: string[];
   created_at: string;
+  tool_steps?: (ToolStep & { seq: number })[]; // Phase 2
+  citations?: Citation[]; // Phase 2
 }
 
 export interface ConversationDetail extends ConversationSummary {
@@ -49,7 +79,9 @@ export interface Budget {
 export type ChatEvent =
   | { type: "meta"; conversation_id: string; message_id: string; mode?: Mode; tools?: boolean; budget?: Budget }
   | { type: "delta"; text: string }
-  | { type: "done"; usage: Usage; stop_reason: string; budget?: Budget }
+  | { type: "tool_start"; step_id: string; tool: string; input: ToolStep["input"] }
+  | { type: "tool_end"; step_id: string; tool: string; status: "ok" | "error"; error_code: string | null; output: ToolStep["output"] }
+  | { type: "done"; usage: Usage; stop_reason: string; budget?: Budget; citations?: Citation[] }
   | { type: "error"; code: string; message: string };
 
 export interface ChatRequest {
@@ -58,6 +90,7 @@ export interface ChatRequest {
   conversation_id?: string;
   images?: string[]; // base64 or data: URLs
   budget_override?: boolean; // run this one message as requested even when the budget is used up
+  tools?: boolean; // sent as false when the composer's Tools toggle is off
 }
 
 /** GET /usage/summary (design.md §16). */
@@ -104,4 +137,6 @@ export interface UiMessage {
   stopReason?: string;
   error?: string;
   streaming?: boolean;
+  steps?: ToolStep[]; // tool steps, in the order they started
+  citations?: Citation[];
 }

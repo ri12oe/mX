@@ -59,7 +59,7 @@ async function toApiError(response: Response): Promise<ApiError> {
 export const isSignedOut = (err: unknown): boolean => err instanceof ApiError && err.status === 401;
 
 /** Resolves if the session cookie is valid; throws ApiError(401) if not. */
-export async function whoami(): Promise<{ model: string }> {
+export async function whoami(): Promise<{ model: string; tools_enabled?: boolean }> {
   return (await request("/whoami")).json();
 }
 
