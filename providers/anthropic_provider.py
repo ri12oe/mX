@@ -357,8 +357,13 @@ def _finished_step(running: ToolStep, block: Any) -> ToolStep:
         sources = [{"url": r.url, "title": r.title} for r in (content or []) if getattr(r, "type", "") == "web_search_result"]
         return replace(running, status="ok", output={"sources": sources})
     if block.type in CODE_RESULT_TYPES and hasattr(content, "return_code"):
-        return replace(running, status="ok",
-                       output={"stdout": content.stdout, "stderr": content.stderr, "return_code": content.return_code})
+        output: dict[str, Any] = {"stdout": getattr(content, "stdout", "") or "",
+                                  "stderr": getattr(content, "stderr", "") or "", "return_code": content.return_code}
+        if getattr(content, "type", "") == "encrypted_code_execution_result":
+            # Code that called web search (dynamic filtering): its output is the search
+            # results, which the API returns encrypted. Nothing readable to keep.
+            output["stdout_hidden"] = True
+        return replace(running, status="ok", output=output)
     return replace(running, status="ok", output={})
 
 

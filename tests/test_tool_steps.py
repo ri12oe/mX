@@ -168,3 +168,9 @@ def test_get_conversation_returns_steps_and_citations(conn: sqlite3.Connection):
     assert [s["tool"] for s in assistant["tool_steps"]] == ["code_execution", "web_search"]
     assert assistant["tool_steps"][0]["output"]["stdout"].startswith("126765")
     assert assistant["citations"] == [{"url": "https://www.python.org/downloads/", "title": "Python downloads"}]
+
+
+def test_hidden_stdout_flag_is_kept_when_clipping():
+    step = db.NewToolStep("s", "code_execution", "ok", {"code": "web_search(...)"},
+                          {"stdout": "", "stderr": "", "return_code": 0, "stdout_hidden": True})
+    assert db.clip_step(step).output == {"stdout": "", "stderr": "", "return_code": 0, "stdout_hidden": True}

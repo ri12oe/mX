@@ -157,7 +157,9 @@ def test_real_web_search_with_citations():
     assert ok and ok[0].output and ok[0].output["sources"]
     assert all(set(src) == {"url", "title"} for src in ok[0].output["sources"])  # never page content
     assert 1 <= final.web_searches <= 2
-    assert final.citations and all(c.url.startswith("http") for c in final.citations)
+    # With dynamic filtering the results pass through code first, and the answer may carry no
+    # citation blocks (seen 2026-10-12). Then the search step's sources are the record of what was read.
+    assert all(c.url.startswith("http") for c in final.citations)
 
     from api.pricing import cost_usd
     cost = cost_usd(final.model, final.input_tokens, final.output_tokens,
@@ -167,3 +169,4 @@ def test_real_web_search_with_citations():
           f"searches={final.web_searches} citations={len(final.citations)} cost=${cost:.4f}")
     print(f"live search answer: {final.text[:200]!r}")
     print(f"live search sources: {[s['title'] for s in ok[0].output['sources'][:3]]}")
+    print(f"live search steps: {[(s.tool, s.status, sorted((s.output or {}).keys())) for s in final.tool_steps]}")

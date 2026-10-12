@@ -206,3 +206,21 @@ def test_usage_counts_win_over_counting_steps():
                                                           "server_tool_use": {"web_search_requests": 3, "web_fetch_requests": 0}})
     reply = asyncio.run(provider_with(final)[0].generate(HISTORY, "sys", tools=ALL_TOOLS))
     assert reply.web_searches == 3
+
+
+def test_encrypted_code_result_from_search_filtering_does_not_crash():
+    """Found by the task 16 live test: with dynamic filtering, web search runs code whose result
+    arrives as `encrypted_code_execution_result` (no stdout). It must become a step, not a crash."""
+    filter_use = {"type": "server_tool_use", "id": "srvtoolu_9", "name": "code_execution",
+                  "input": {"code": "results = web_search(query='python latest release')"}}
+    encrypted = {"type": "code_execution_tool_result", "tool_use_id": "srvtoolu_9",
+                 "content": {"type": "encrypted_code_execution_result", "encrypted_stdout": "ZW5j",
+                             "stderr": "", "return_code": 0, "content": []}}
+    final = message_with(filter_use, encrypted, {"type": "text", "text": "Python 3.14.0 is the latest."})
+    stream = FakeStream([None, None, "Python 3.14.0 is the latest."], final, blocks=final.content[:2])
+    items = asyncio.run(collect(streaming_provider(stream)[0].stream(HISTORY, "sys", tools=ALL_TOOLS)))
+    ended = items[1]
+    assert isinstance(ended, ToolStep)
+    assert (ended.tool, ended.status) == ("code_execution", "ok")
+    assert ended.output == {"stdout": "", "stderr": "", "return_code": 0, "stdout_hidden": True}
+    assert "ZW5j" not in str(items[-1])  # the encrypted output is never kept

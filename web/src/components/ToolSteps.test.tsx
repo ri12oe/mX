@@ -55,6 +55,12 @@ describe("ToolSteps", () => {
     expect(screen.getAllByText("Cut short to keep the chat small.")).toHaveLength(2);
   });
 
+  it("explains code whose output is private search results", () => {
+    render(<ToolSteps steps={[{ ...ran, output: { stdout: "", stderr: "", return_code: 0, stdout_hidden: true } }]} />);
+    expect(screen.getByText(/filtered web search results/)).toBeTruthy();
+    expect(screen.queryByText("No output.")).toBeNull();
+  });
+
   it("labels bash commands and file edits", () => {
     render(<ToolSteps steps={[{ ...ran, input: { code: "ls", language: "bash" } }]} />);
     expect(screen.getByText("Command")).toBeTruthy();

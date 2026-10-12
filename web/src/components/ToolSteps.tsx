@@ -67,7 +67,10 @@ function CodeDetails({ step }: { step: ToolStep }) {
         text={step.input.code ?? ""} cut={step.input.code_truncated} />
       {out?.stdout ? <Block title="Output" text={out.stdout} cut={out.stdout_truncated} /> : null}
       {out?.stderr ? <Block title="Errors" text={out.stderr} cut={out.stderr_truncated} /> : null}
-      {out && !out.stdout && !out.stderr && step.status === "ok" && <p className="tool-step-note">No output.</p>}
+      {out?.stdout_hidden && (
+        <p className="tool-step-note">This code filtered web search results; its output stays private to the search.</p>
+      )}
+      {out && !out.stdout && !out.stderr && !out.stdout_hidden && step.status === "ok" && <p className="tool-step-note">No output.</p>}
     </>
   );
 }
