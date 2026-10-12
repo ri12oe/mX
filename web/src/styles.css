@@ -504,6 +504,46 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .button-primary:hover:not(:disabled) { background: rgba(0, 229, 255, 0.3); box-shadow: var(--glow-strong); }
 .button-secondary { border: 1px solid var(--line); background: none; color: var(--muted); }
 
+/* ---------- Tool steps and the Tools toggle (design.md §17) ---------- */
+
+.tool-steps { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.tool-step { border: 1px solid var(--line); border-left: 2px solid var(--cyan-dim); background: var(--panel-2); }
+.tool-step summary {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer; list-style: none;
+  font-size: 13.5px; color: var(--cyan-soft); letter-spacing: 0.03em;
+}
+.tool-step summary::-webkit-details-marker { display: none; }
+.tool-step summary::after { content: "▸"; margin-left: auto; color: var(--muted); font-size: 11px; }
+.tool-step[open] summary::after { content: "▾"; }
+.tool-step-icon { font-family: var(--mono); font-size: 12px; color: var(--cyan); }
+.tool-step-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-step-running { border-left-color: var(--cyan); box-shadow: var(--glow); }
+.tool-step-warn { border-left-color: var(--warn); }
+.tool-step-warn summary { color: #ffe2a3; }
+.tool-step-spinner {
+  width: 10px; height: 10px; border: 2px solid rgba(0, 229, 255, 0.25); border-top-color: var(--cyan);
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+.tool-step-body { padding: 4px 10px 10px; border-top: 1px dashed var(--line); }
+.tool-step-block { margin-top: 8px; }
+.tool-step-block-title { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.tool-step-block pre {
+  margin: 0; padding: 10px 12px; max-height: 320px; overflow: auto; background: var(--code-bg);
+  border: 1px solid var(--line); font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+  color: var(--text-body); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.tool-step-note { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); }
+.tool-step-sources { margin: 8px 0 0; padding-left: 20px; font-size: 13.5px; }
+.tool-step-source-host { color: var(--muted); font-size: 12px; }
+
+.tools-toggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line);
+  background: none; color: var(--muted); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.tools-toggle { white-space: nowrap; }
+.tools-toggle > span[aria-hidden] { font-family: var(--mono); letter-spacing: 0; }
+.tools-toggle.active { border-color: var(--line-strong); color: var(--cyan-soft); background: rgba(0, 229, 255, 0.08); }
+
 /* ---------- Budget and cost (design.md §16) ---------- */
 
 /* State colors are status colors: always paired with a text label, never color alone. */
@@ -591,6 +631,9 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   .budget-banner { flex-direction: column; align-items: flex-start; }
   .budget-banner .override-button { white-space: normal; }
   .cost-panel { padding: 16px 12px; }
+  /* Phones: the Tools toggle shrinks to its icon; the label stays for screen readers. */
+  .tools-toggle { padding: 4px 8px; }
+  .tools-toggle-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .cost-days th, .cost-days td { padding: 5px 3px; }
 }
 
