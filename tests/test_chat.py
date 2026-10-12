@@ -129,6 +129,7 @@ def test_provider_gets_system_prompt_and_normal_mode_options(client: TestClient,
     assert text.startswith("You are mX") and "Mode: normal" in text
     assert "<!--" not in text
     assert isinstance(call.opts.pop("meter"), UsageMeter)
+    assert call.opts.pop("tools").enabled is True  # tools: see tests/test_chat_tools.py
     assert call.opts == {"max_tokens": 16000, "effort": "high", **CACHE_OPTS}
     assert [(m.role, m.content) for m in call.messages] == [("user", "What is 4 times 3?")]
 
@@ -138,6 +139,7 @@ def test_brief_mode_uses_brief_prompt_and_options(client: TestClient, fake: Fake
     call = fake.calls[0]
     assert "Mode: brief" in system_text(call)
     call.opts.pop("meter")
+    call.opts.pop("tools")
     assert call.opts == {"max_tokens": 2048, "effort": "low", **CACHE_OPTS}
 
 

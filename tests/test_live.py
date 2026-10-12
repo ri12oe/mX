@@ -9,7 +9,7 @@ import pytest
 
 from api.config import settings
 from providers import create_provider
-from providers.base import Message, ModelResponse, SystemPart, UsageMeter
+from providers.base import Message, ModelResponse, SystemPart, ToolOptions, ToolStep, UsageMeter
 
 pytestmark = [
     pytest.mark.live,
@@ -84,3 +84,45 @@ def test_real_prompt_cache_hit_on_second_identical_request():
     for label, r in (("first", first), ("second", second)):
         print(f"\nlive cache {label}: in={r.input_tokens} write5m={r.cache_write_5m_tokens} "
               f"read={r.cache_read_tokens} out={r.output_tokens}")
+
+
+CODE_SYSTEM = (
+    "You are a test harness. When asked to compute something, run Python with the code execution "
+    "tool, then reply with only the exact result."
+)
+
+
+def test_real_code_execution_and_tools_off():
+    """Design §17: a real code run returns 2^100; with tools off, tool_choice none is accepted
+    alongside server tools and nothing runs. About $0.02–0.05 (code execution itself is free
+    within the monthly allowance)."""
+    provider = create_provider(
+        settings.primary_provider,
+        api_key=settings.anthropic_api_key,
+        model=settings.primary_model,
+    )
+    on = ToolOptions(enabled=True, code_execution=True, web_search=False, web_search_max_uses=1)
+    off = ToolOptions(enabled=False, code_execution=True, web_search=False, web_search_max_uses=1)
+    ask = [Message(role="user", content="Compute 2**100 using the code execution tool.")]
+
+    async def run(tools: ToolOptions) -> list[str | ToolStep | ModelResponse]:
+        return [item async for item in provider.stream(ask, CODE_SYSTEM, max_tokens=4096, effort="low", tools=tools)]
+
+    items = asyncio.run(run(on))
+    final = items[-1]
+    assert isinstance(final, ModelResponse)
+    steps = [i for i in items if isinstance(i, ToolStep)]
+    assert any(s.tool == "code_execution" and s.status == "running" for s in steps)
+    ran = [s for s in final.tool_steps if s.tool == "code_execution" and s.status == "ok"]
+    assert ran and "1267650600228229401496703205376" in (ran[-1].output or {}).get("stdout", "")
+    assert "1267650600228229401496703205376" in final.text
+    assert final.code_runs >= 1
+
+    off_items = asyncio.run(run(off))  # the API accepts tool_choice none with server tools
+    off_final = off_items[-1]
+    assert isinstance(off_final, ModelResponse)
+    assert off_final.tool_steps == [] and off_final.code_runs == 0
+
+    print(f"\nlive code: requests={final.requests} in={final.input_tokens} out={final.output_tokens} "
+          f"code_runs={final.code_runs} steps={[(s.tool, s.status) for s in final.tool_steps]}")
+    print(f"live tools off: in={off_final.input_tokens} out={off_final.output_tokens} text={off_final.text[:80]!r}")
