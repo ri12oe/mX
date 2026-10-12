@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     monthly_budget_usd: float = 20.0
     # Master switch for tools (design.md §17). False: no tools are declared at all.
     tools_enabled: bool = True
+    # Most web searches per API request ($0.01 each, design.md §9.1). 1–20.
+    web_search_max_uses: int = 5
+
+    @field_validator("web_search_max_uses")
+    @classmethod
+    def _search_cap_in_range(cls, value: int) -> int:
+        if not 1 <= value <= 20:
+            raise ValueError("WEB_SEARCH_MAX_USES must be between 1 and 20.")
+        return value
 
     @field_validator("monthly_budget_usd")
     @classmethod

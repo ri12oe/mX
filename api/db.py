@@ -222,6 +222,8 @@ def _clip_output(output: dict[str, Any]) -> dict[str, Any]:
                 clipped[f"{key}_truncated"] = True
     if "return_code" in output:
         clipped["return_code"] = output["return_code"]
+    if output.get("stdout_hidden") is True:  # search results the API keeps encrypted
+        clipped["stdout_hidden"] = True
     if isinstance(output.get("sources"), list):
         sources = [s for s in output["sources"] if isinstance(s, dict) and isinstance(s.get("url"), str)]
         clipped["sources"] = [clip_citation(Citation(s["url"], str(s.get("title") or "")))

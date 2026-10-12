@@ -29,7 +29,7 @@ from api.images import ImageError, decode_images
 from api.pricing import cost_usd
 from api.prompts import MODE_OPTIONS, Mode, SystemPrompt, load_system_prompt
 from providers import ModelProvider
-from providers.base import ImageData, Message, ModelResponse, SystemPart, ToolOptions, ToolStep, UsageMeter
+from providers.base import Citation, ImageData, Message, ModelResponse, SystemPart, ToolOptions, ToolStep, UsageMeter
 from providers.errors import (
     ProviderError,
     ProviderRateLimitError,
@@ -50,7 +50,6 @@ FIRST_ITEM_WAIT_SECONDS = 10.0  # quick failures within this become HTTP errors
 HEARTBEAT_SECONDS = 15.0  # comment line sent while waiting for the model
 HEARTBEAT = ": ping\n\n"
 SERVER_TOOLS = frozenset({"code_execution", "web_search"})  # shown as tool_start/tool_end and saved
-WEB_SEARCH_MAX_USES = 5  # becomes the WEB_SEARCH_MAX_USES setting when web search is switched on (task 16)
 
 
 class ChatRequest(BaseModel):
@@ -121,8 +120,16 @@ def tool_options(policy: TurnPolicy) -> ToolOptions | None:
     otherwise the same definitions every time, with `enabled` saying whether they may be used."""
     if not settings.tools_enabled:
         return None
-    return ToolOptions(enabled=policy.tools, code_execution=True, web_search=False,
-                       web_search_max_uses=WEB_SEARCH_MAX_USES)
+    return ToolOptions(enabled=policy.tools, code_execution=True, web_search=True,
+                       web_search_max_uses=settings.web_search_max_uses)
+
+
+def unique_citations(citations: list[Citation]) -> list[db.Citation]:
+    """Each cited source once, in first-mention order (design.md §5: deduplicated)."""
+    seen: dict[str, db.Citation] = {}
+    for c in citations:
+        seen.setdefault(c.url, db.Citation(c.url, c.title))
+    return list(seen.values())
 
 
 def budget_event(status: BudgetStatus, forced: bool) -> dict[str, Any]:
@@ -344,7 +351,7 @@ class TurnContext:
             assistant_content=self.text,  # exactly what was streamed
             usage=self.usage_record(reply, "ok"),
             tool_steps=self.saved_steps(reply),
-            citations=tuple(db.Citation(c.url, c.title) for c in reply.citations),
+            citations=tuple(unique_citations(reply.citations)),
         ))
         self.recorded = True
 
@@ -447,7 +454,7 @@ async def stream_events(
         yield sse("done", {
             "usage": usage_event(reply, cost),
             "stop_reason": reply.stop_reason,
-            "citations": [db.clip_citation(db.Citation(c.url, c.title)) for c in reply.citations],
+            "citations": [db.clip_citation(c) for c in unique_citations(reply.citations)],
             "budget": budget_event(after, policy.forced),
         })
     finally:

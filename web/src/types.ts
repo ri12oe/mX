@@ -32,6 +32,7 @@ export interface ToolStep {
     return_code?: number;
     stdout_truncated?: boolean;
     stderr_truncated?: boolean;
+    stdout_hidden?: boolean; // code that filtered web search results; the API keeps that output encrypted
     sources?: Citation[];
   } | null;
   error_code?: string | null;

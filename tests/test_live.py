@@ -126,3 +126,47 @@ def test_real_code_execution_and_tools_off():
     print(f"\nlive code: requests={final.requests} in={final.input_tokens} out={final.output_tokens} "
           f"code_runs={final.code_runs} steps={[(s.tool, s.status) for s in final.tool_steps]}")
     print(f"live tools off: in={off_final.input_tokens} out={off_final.output_tokens} text={off_final.text[:80]!r}")
+
+
+SEARCH_SYSTEM = (
+    "You are a test harness. Answer current-events questions by searching the web first, "
+    "cite your sources, and keep the answer to two sentences."
+)
+
+
+def test_real_web_search_with_citations():
+    """Design §17: a real search returns sources (url + title only) and a cited answer; the
+    search is counted and its $0.01 fee priced. About $0.03–0.10 (search results are input tokens)."""
+    provider = create_provider(
+        settings.primary_provider,
+        api_key=settings.anthropic_api_key,
+        model=settings.primary_model,
+    )
+    search_only = ToolOptions(enabled=True, code_execution=False, web_search=True, web_search_max_uses=2)
+    ask = [Message(role="user", content="What is the latest stable release of Python right now? Search the web.")]
+
+    async def run() -> list[str | ToolStep | ModelResponse]:
+        return [item async for item in provider.stream(ask, SEARCH_SYSTEM, max_tokens=4096, effort="low", tools=search_only)]
+
+    items = asyncio.run(run())
+    final = items[-1]
+    assert isinstance(final, ModelResponse)
+    searches = [s for s in final.tool_steps if s.tool == "web_search"]
+    assert searches and searches[0].input.get("query")
+    ok = [s for s in searches if s.status == "ok"]
+    assert ok and ok[0].output and ok[0].output["sources"]
+    assert all(set(src) == {"url", "title"} for src in ok[0].output["sources"])  # never page content
+    assert 1 <= final.web_searches <= 2
+    # With dynamic filtering the results pass through code first, and the answer may carry no
+    # citation blocks (seen 2026-10-12). Then the search step's sources are the record of what was read.
+    assert all(c.url.startswith("http") for c in final.citations)
+
+    from api.pricing import cost_usd
+    cost = cost_usd(final.model, final.input_tokens, final.output_tokens,
+                    cache_read_tokens=final.cache_read_tokens, cache_write_5m_tokens=final.cache_write_5m_tokens,
+                    web_searches=final.web_searches)
+    print(f"\nlive search: requests={final.requests} in={final.input_tokens} out={final.output_tokens} "
+          f"searches={final.web_searches} citations={len(final.citations)} cost=${cost:.4f}")
+    print(f"live search answer: {final.text[:200]!r}")
+    print(f"live search sources: {[s['title'] for s in ok[0].output['sources'][:3]]}")
+    print(f"live search steps: {[(s.tool, s.status, sorted((s.output or {}).keys())) for s in final.tool_steps]}")

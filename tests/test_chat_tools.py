@@ -165,10 +165,10 @@ def test_a_tool_event_counts_as_the_first_item_for_fail_fast(conn: sqlite3.Conne
 # --- Code execution switched on (task 14) -------------------------------------
 
 
-def test_code_execution_is_offered_by_default(client: TestClient, fake: FakeProvider):
+def test_code_execution_and_web_search_are_offered_by_default(client: TestClient, fake: FakeProvider):
     meta = chat(client)[0][1]
     tools = fake.calls[0].opts["tools"]
-    assert (tools.enabled, tools.code_execution, tools.web_search) == (True, True, False)  # search: task 16
+    assert (tools.enabled, tools.code_execution, tools.web_search, tools.web_search_max_uses) == (True, True, True, 5)
     assert meta["tools"] is True
 
 
@@ -220,3 +220,61 @@ def test_code_runs_are_saved_and_counted(
     assert (step["status"], step["error_code"], return_code) == expected
     assert done["usage"]["code_runs"] == 1
     assert conn.execute("SELECT code_runs FROM usage").fetchone()[0] == 1
+
+
+# --- Web search switched on (task 16) -----------------------------------------
+
+
+def test_search_cap_comes_from_the_setting(client: TestClient, fake: FakeProvider, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "web_search_max_uses", 2)
+    chat(client)
+    assert fake.calls[0].opts["tools"].web_search_max_uses == 2
+
+
+@pytest.mark.parametrize("value", [0, 21])
+def test_search_cap_setting_is_checked(value: int):
+    from api.config import Settings
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="WEB_SEARCH_MAX_USES"):
+        Settings(web_search_max_uses=value)
+
+
+def test_search_sources_stream_in_tool_end(client: TestClient, fake: FakeProvider):
+    fake.script = [SEARCH, SEARCHED, "Python 3.14 is out."]
+    end = next(data for name, data in chat(client) if name == "tool_end")
+    assert end["tool"] == "web_search"
+    assert end["output"] == {"sources": [{"url": "https://www.python.org/downloads/", "title": "Python downloads"}]}
+
+
+def test_citations_are_deduplicated_in_done_and_saved(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
+    docs = Citation("https://docs.python.org/3/", "Python docs")
+    downloads = Citation("https://www.python.org/downloads/", "Python downloads")
+    fake.script = [SEARCH, SEARCHED, "Answer with sources."]
+    fake.citations = [downloads, docs, Citation(downloads.url, "Same page, another title"), docs]
+    events = chat(client)
+    done = events[-1][1]
+    assert done["citations"] == [{"url": downloads.url, "title": "Python downloads"},
+                                 {"url": docs.url, "title": "Python docs"}]
+    saved = db.get_conversation(conn, events[0][1]["conversation_id"])["messages"][1]["citations"]  # type: ignore[index]
+    assert saved == done["citations"]
+
+
+def test_a_failed_search_is_an_error_chip_and_not_billed(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
+    failed = ToolStep("t2", "web_search", "error", {"query": "x"}, None, "too_many_requests")
+    fake.script = [SEARCH, failed, "Search is busy; here's what I know."]
+    events = chat(client)
+    end = next(data for name, data in events if name == "tool_end")
+    assert (end["status"], end["error_code"]) == ("error", "too_many_requests")
+    assert events[-1][1]["usage"]["web_searches"] == 0
+    assert conn.execute("SELECT web_searches FROM usage").fetchone()[0] == 0
+
+
+def test_search_fee_is_in_the_cost(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
+    """500 in × $4 + 40 out × $20 per million = $0.0028, plus 2 searches × $0.01."""
+    other = ToolStep("t3", "web_search", "ok", {"query": "q2"}, {"sources": []})
+    fake.script = [SEARCH, SEARCHED, ToolStep("t3", "web_search", "running", {"query": "q2"}), other, "Done."]
+    done = chat(client)[-1][1]
+    assert done["usage"]["web_searches"] == 2
+    assert done["usage"]["cost_usd"] == pytest.approx(0.0028 + 0.02)
+    assert conn.execute("SELECT cost_usd FROM usage").fetchone()[0] == pytest.approx(0.0228)
