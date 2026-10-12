@@ -37,6 +37,7 @@ WEB_SEARCH_TOOL_TYPE = "web_search_20260209"  # dynamic filtering on Opus 5.5
 CODE_TOOL_NAMES = {"code_execution", "bash_code_execution", "text_editor_code_execution"}
 CODE_RESULT_TYPES = {"code_execution_tool_result", "bash_code_execution_tool_result",
                      "text_editor_code_execution_tool_result"}
+MAX_CONTINUATIONS = 3  # pause_turn resumes per turn; after that the reply ends as it is (design.md §6.1)
 
 
 class AnthropicProvider:
@@ -77,15 +78,20 @@ class AnthropicProvider:
         `effort` controls how hard the model thinks (and how many tokens it
         spends). None uses the model's default. Caching options: see stream().
         """
-        params = self._params(messages, system, max_tokens, effort, cache_messages, cache_ttl, tools, opts)
+        base = self._params(messages, system, max_tokens, effort, cache_messages, cache_ttl, tools, opts)
         metering = _Metering(meter, cache_ttl)
+        responses: list[BetaMessage] = []
         try:
-            response = await self._client.beta.messages.create(**params)
+            while True:
+                response = await self._client.beta.messages.create(**continuation_params(base, responses))
+                metering.request_started()
+                metering.update(response)
+                responses.append(response)
+                if not should_continue(responses):
+                    break
         except anthropic.APIError as exc:
             raise map_error(exc) from exc
-        metering.request_started()
-        metering.update(response)
-        return to_model_response(response, cache_ttl)
+        return combine_responses(responses, cache_ttl)
 
     async def stream(
         self,
@@ -114,31 +120,40 @@ class AnthropicProvider:
         tool step is yielded as a `ToolStep` when its input is complete
         ("running") and again when its result arrives ("ok"/"error").
 
+        One turn may take several requests (design.md §6.1): when the server's
+        tool loop pauses (`stop_reason: "pause_turn"`), the conversation is
+        re-sent with the paused content and the reply continues, at most
+        MAX_CONTINUATIONS times. The final ModelResponse covers every request.
+
         If a refusal is rescued mid-stream, the fallback model continues on the
         same stream. An unrescued refusal raises ProviderRefusalError after the
         partial text; callers must discard it. If the caller stops iterating
         (e.g. the browser disconnects), the HTTP stream is closed.
         """
-        params = self._params(messages, system, max_tokens, effort, cache_messages, cache_ttl, tools, opts)
+        base = self._params(messages, system, max_tokens, effort, cache_messages, cache_ttl, tools, opts)
         metering = _Metering(meter, cache_ttl)
         steps = ToolStepTracker()
+        responses: list[BetaMessage] = []
         try:
-            async with self._client.beta.messages.stream(**params) as stream:
-                async for event in stream:
-                    if event.type == "text":
-                        yield event.text
-                    elif event.type == "content_block_stop":
-                        step = steps.on_block(event.content_block)
-                        if step is not None:
-                            yield step
-                    elif event.type in ("message_start", "message_delta"):
-                        if event.type == "message_start":
-                            metering.request_started()
-                        metering.update(stream.current_message_snapshot)
-                final = await stream.get_final_message()
+            while True:
+                async with self._client.beta.messages.stream(**continuation_params(base, responses)) as stream:
+                    async for event in stream:
+                        if event.type == "text":
+                            yield event.text
+                        elif event.type == "content_block_stop":
+                            step = steps.on_block(event.content_block)
+                            if step is not None:
+                                yield step
+                        elif event.type in ("message_start", "message_delta"):
+                            if event.type == "message_start":
+                                metering.request_started()
+                            metering.update(stream.current_message_snapshot)
+                    responses.append(await stream.get_final_message())
+                if not should_continue(responses):
+                    break
         except anthropic.APIError as exc:
             raise map_error(exc) from exc
-        yield to_model_response(final, cache_ttl)
+        yield combine_responses(responses, cache_ttl)
 
     def _params(
         self,
@@ -347,10 +362,10 @@ def _finished_step(running: ToolStep, block: Any) -> ToolStep:
     return replace(running, status="ok", output={})
 
 
-def citations_of(response: BetaMessage) -> list[Citation]:
+def citations_of(blocks: list[Any]) -> list[Citation]:
     """Web sources cited in the answer's text blocks, first mention first, no repeats."""
     seen: dict[str, Citation] = {}
-    for block in response.content:
+    for block in blocks:
         if block.type != "text":
             continue
         for cite in getattr(block, "citations", None) or []:
@@ -360,11 +375,11 @@ def citations_of(response: BetaMessage) -> list[Citation]:
     return list(seen.values())
 
 
-def visible_text(response: BetaMessage) -> str:
+def visible_text(blocks: list[Any]) -> str:
     """The answer's text blocks. Text that resumes after a tool step starts a new paragraph,
     the same rule /chat applies to the stream (design.md §5)."""
     text, after_tool = "", False
-    for block in response.content:
+    for block in blocks:
         if block.type == "text":
             text += ("\n\n" if after_tool and text else "") + block.text
             after_tool = False
@@ -374,21 +389,70 @@ def visible_text(response: BetaMessage) -> str:
 
 
 def to_model_response(response: BetaMessage, cache_ttl: str = "5m") -> ModelResponse:
-    """Keep only the visible text; thinking blocks are internal to the model."""
-    if response.stop_reason == "refusal":
-        category = response.stop_details.category if response.stop_details else None
+    """One response as a ModelResponse (a turn that needed a single request)."""
+    return combine_responses([response], cache_ttl)
+
+
+def combine_responses(responses: list[BetaMessage], cache_ttl: str = "5m") -> ModelResponse:
+    """The whole turn: text, tool steps and citations from every request, usage summed.
+
+    Keeps only the visible text; thinking blocks are internal to the model.
+    """
+    last = responses[-1]
+    if last.stop_reason == "refusal":
+        category = last.stop_details.category if last.stop_details else None
         raise ProviderRefusalError("The model declined this request.", category=category)
+    blocks = [block for response in responses for block in response.content]
     tracker = ToolStepTracker()
-    for block in response.content:
+    for block in blocks:
         tracker.on_block(block)
+    usage = {name: 0 for name in usage_counts(last.usage, cache_ttl)}
+    for response in responses:
+        for name, value in usage_counts(response.usage, cache_ttl).items():
+            usage[name] += value
     return ModelResponse(
-        text=visible_text(response),
-        model=response.model,
-        stop_reason=response.stop_reason or "end_turn",
+        text=visible_text(blocks),
+        model=last.model,
+        stop_reason=last.stop_reason or "end_turn",
         tool_steps=tracker.final_steps(),
-        citations=citations_of(response),
-        **usage_counts(response.usage, cache_ttl),
+        citations=citations_of(blocks),
+        requests=len(responses),
+        **usage,
     )
+
+
+# --- The pause_turn loop (design.md §6.1) -------------------------------------
+
+
+def should_continue(responses: list[BetaMessage]) -> bool:
+    """Resume only a paused server tool loop, and only MAX_CONTINUATIONS times.
+
+    Every other stop reason ends the turn. In particular a reply cut off by
+    `max_tokens` or ended by a `refusal` never continues, so a half-written
+    tool call is never acted on (client tools, week 4, rely on this).
+    """
+    return responses[-1].stop_reason == "pause_turn" and len(responses) <= MAX_CONTINUATIONS
+
+
+def continuation_params(base: dict[str, Any], responses: list[BetaMessage]) -> dict[str, Any]:
+    """The first request as built, or a continuation: the same request plus everything the
+    model produced so far as one assistant message (no extra user message), reusing its
+    code-execution container."""
+    if not responses:
+        return base
+    content = [block_param(block) for response in responses for block in response.content]
+    params = {**base, "messages": [*base["messages"], {"role": "assistant", "content": content}]}
+    container = next((r.container for r in reversed(responses) if r.container is not None), None)
+    if container is not None:
+        params["container"] = container.id
+    return params
+
+
+def block_param(block: Any) -> dict[str, Any]:
+    """A response content block sent back unchanged (thinking signatures, tool blocks, encrypted results)."""
+    param = block.model_dump(mode="json", exclude_none=True)
+    param.pop("parsed_output", None)  # added by the SDK's parsing helpers, not part of the API
+    return param
 
 
 def map_error(exc: anthropic.APIError) -> ProviderError:
