@@ -13,7 +13,7 @@ import math
 import sqlite3
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import anyio
@@ -29,7 +29,7 @@ from api.images import ImageError, decode_images
 from api.pricing import cost_usd
 from api.prompts import MODE_OPTIONS, Mode, SystemPrompt, load_system_prompt
 from providers import ModelProvider
-from providers.base import ImageData, Message, ModelResponse, SystemPart, UsageMeter
+from providers.base import ImageData, Message, ModelResponse, SystemPart, ToolStep, UsageMeter
 from providers.errors import (
     ProviderError,
     ProviderRateLimitError,
@@ -49,6 +49,7 @@ SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 FIRST_ITEM_WAIT_SECONDS = 10.0  # quick failures within this become HTTP errors
 HEARTBEAT_SECONDS = 15.0  # comment line sent while waiting for the model
 HEARTBEAT = ": ping\n\n"
+SERVER_TOOLS = frozenset({"code_execution", "web_search"})  # shown as tool_start/tool_end and saved
 
 
 class ChatRequest(BaseModel):
@@ -219,8 +220,8 @@ def with_image_markers(message: dict[str, Any]) -> str:
     return "\n".join([*markers, message["content"]])
 
 
-async def fail_fast(next_item: asyncio.Future[str | ModelResponse], turn: "TurnContext") -> None:
-    """Wait briefly for the first chunk, so quick failures (bad key, overloaded,
+async def fail_fast(next_item: asyncio.Future[str | ToolStep | ModelResponse], turn: "TurnContext") -> None:
+    """Wait briefly for the first item (text or a tool step), so quick failures (bad key, overloaded,
     refused) become HTTP errors. If the model is still thinking after
     FIRST_ITEM_WAIT_SECONDS, start streaming anyway so the connection isn't silent.
     """
@@ -261,6 +262,39 @@ class TurnContext:
     conn: sqlite3.Connection
     policy: TurnPolicy
     recorded: bool = False  # this turn's spend is in the usage table (or nothing was spent)
+    text: str = ""  # the reply as streamed (and saved), with breaks around tool steps
+    steps: dict[str, ToolStep] = field(default_factory=dict)  # latest state of each step, in start order
+    break_pending: bool = False  # a tool step ran since the last text
+
+    def add_text(self, chunk: str) -> str:
+        """The chunk to stream. Text resuming after a tool step starts a new paragraph (design.md §5)."""
+        if self.break_pending and self.text:
+            chunk = "\n\n" + chunk
+        self.break_pending = False
+        self.text += chunk
+        return chunk
+
+    def tool_event(self, step: ToolStep) -> str | None:
+        """`tool_start` / `tool_end` for a server tool step; None for others (client tools, week 4)."""
+        if step.tool not in SERVER_TOOLS:
+            return None
+        self.steps[step.id] = replace(step)
+        self.break_pending = True
+        clipped = db.clip_step(to_db_step(step))
+        if step.status == "running":
+            return sse("tool_start", {"step_id": step.id, "tool": step.tool, "input": clipped.input})
+        return sse("tool_end", {
+            "step_id": step.id, "tool": step.tool, "status": step.status,
+            "error_code": step.error_code, "output": clipped.output or {},
+        })
+
+    def saved_steps(self, reply: ModelResponse) -> tuple[db.NewToolStep, ...]:
+        """Every server tool step of the reply, final states, in the order they started."""
+        steps = dict(self.steps)
+        for step in reply.tool_steps:  # the provider's final word on each step
+            if step.tool in SERVER_TOOLS:
+                steps[step.id] = step
+        return tuple(to_db_step(s) for s in steps.values())
 
     def usage_record(self, usage: Usage, status: db.UsageStatus) -> db.UsageRecord:
         return db.UsageRecord(
@@ -291,8 +325,10 @@ class TurnContext:
             user_created_at=p.user_created_at,
             user_images=p.user_images,
             assistant_message_id=p.assistant_message_id,
-            assistant_content=reply.text,
+            assistant_content=self.text,  # exactly what was streamed
             usage=self.usage_record(reply, "ok"),
+            tool_steps=self.saved_steps(reply),
+            citations=tuple(db.Citation(c.url, c.title) for c in reply.citations),
         ))
         self.recorded = True
 
@@ -316,9 +352,16 @@ class TurnContext:
                              status, self.pending.conversation_id)
 
 
+def to_db_step(step: ToolStep) -> db.NewToolStep:
+    """A step as stored. One still "running" when the reply ended is saved as an error."""
+    if step.status == "running":
+        return db.NewToolStep(step.id, step.tool, "error", step.input, step.output, step.error_code or "incomplete")
+    return db.NewToolStep(step.id, step.tool, step.status, step.input, step.output, step.error_code)
+
+
 async def stream_events(
-    stream: AsyncIterator[str | ModelResponse],
-    next_item: asyncio.Future[str | ModelResponse],
+    stream: AsyncIterator[str | ToolStep | ModelResponse],
+    next_item: asyncio.Future[str | ToolStep | ModelResponse],
     turn: TurnContext,
 ) -> AsyncIterator[str]:
     pending = turn.pending
@@ -340,7 +383,12 @@ async def stream_events(
                 item = next_item.result()
                 if isinstance(item, ModelResponse):
                     break
-                yield sse("delta", {"text": item})
+                if isinstance(item, ToolStep):
+                    event = turn.tool_event(item)
+                    if event:
+                        yield event
+                else:
+                    yield sse("delta", {"text": turn.add_text(item)})
                 next_item = asyncio.ensure_future(anext(stream))
         except ProviderError as exc:
             turn.record_failure(exc.code, "failed")
@@ -383,6 +431,7 @@ async def stream_events(
         yield sse("done", {
             "usage": usage_event(reply, cost),
             "stop_reason": reply.stop_reason,
+            "citations": [db.clip_citation(db.Citation(c.url, c.title)) for c in reply.citations],
             "budget": budget_event(after, policy.forced),
         })
     finally:
