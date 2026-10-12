@@ -554,8 +554,8 @@ Days are **local** dates with any usage, oldest first: the month's rows are fetc
 ## 17. Tools (Phase 2, W2–W3)
 | Tool | Type | Runs where | Request definition |
 |---|---|---|---|
-| Code execution | Anthropic server tool | Anthropic's sandbox: isolated container, no internet, Python 3.11 with numpy/sympy/pandas/matplotlib | `{"type": "code_execution_20260120", "name": "code_execution"}`. **VERIFY the version:** the reference shows `code_execution_20260120`, and `code_execution_20260521` (with a beta header) in its Skills example |
-| Web search | Anthropic server tool | Anthropic | `{"type": "web_search_20260209", "name": "web_search", "max_uses": WEB_SEARCH_MAX_USES}` (VERIFY `max_uses` on this version). Includes dynamic filtering on Opus 5.5 |
+| Code execution | Anthropic server tool | Anthropic's sandbox: isolated container, no internet, Python 3.11 with numpy/sympy/pandas/matplotlib | `{"type": "code_execution_20260120", "name": "code_execution"}`. Version chosen 2026-10-12: it's the one the reference's code-execution section documents; `_20260521` appears only in its Skills example. SDK 1.9.0 has types for both. Results arrive as `bash_code_execution_tool_result` / `code_execution_tool_result` (`stdout`, `stderr`, `return_code`) or `text_editor_code_execution_tool_result`; mX shows all three as `code_execution` |
+| Web search | Anthropic server tool | Anthropic | `{"type": "web_search_20260209", "name": "web_search", "max_uses": WEB_SEARCH_MAX_USES}`. `max_uses` verified 2026-10-12 in SDK 1.9.0's `BetaWebSearchTool20260209Param`. Includes dynamic filtering on Opus 5.5. Result blocks carry `url`, `title`, `encrypted_content`, `page_age`; mX keeps only `url` and `title`. Error codes: `invalid_tool_input`, `unavailable`, `max_uses_exceeded`, `too_many_requests`, `query_too_long`, `request_too_large` |
 | `propose_memory` | Client tool (mX runs it) | mX, in memory only | §18 |
 
 - **mX decides.** `tool_choice` is `auto` (Opus 5.5 rejects forced tool use anyway). When to use each tool is guided by the v4 prompt and the tool descriptions.
