@@ -84,13 +84,17 @@ class FakeStream:
 
     def __init__(
         self,
-        chunks: list[str],
+        chunks: list[str | None],
         final: BetaMessage,
         error: Exception | None = None,
         fail_after: int | None = None,
         start_usage: dict[str, Any] | None = None,
+        blocks: list[Any] | None = None,
     ) -> None:
+        """`blocks`: finished non-text content blocks (tool use / results), each emitted as a
+        `content_block_stop` event in place of a `None` placeholder in `chunks`."""
         self.chunks, self.final, self.error, self.fail_after = chunks, final, error, fail_after
+        self.blocks = list(blocks or [])
         default_start = {**final.usage.model_dump(exclude_none=True), "output_tokens": 0}
         self.start = BetaMessage.model_validate({**final.model_dump(), "usage": start_usage or default_start})
         self.current_message_snapshot: BetaMessage | None = None
@@ -108,10 +112,14 @@ class FakeStream:
     async def __aiter__(self) -> AsyncIterator[SimpleNamespace]:
         self.current_message_snapshot = self.start
         yield SimpleNamespace(type="message_start")
+        blocks = iter(self.blocks)
         for i, chunk in enumerate(self.chunks):
             if self.error is not None and i == self.fail_after:
                 raise self.error
-            yield SimpleNamespace(type="text", text=chunk)
+            if chunk is None:
+                yield SimpleNamespace(type="content_block_stop", content_block=next(blocks))
+            else:
+                yield SimpleNamespace(type="text", text=chunk)
         self.current_message_snapshot = self.final
         yield SimpleNamespace(type="message_delta")
 
