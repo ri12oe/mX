@@ -1,15 +1,17 @@
 // Push-to-talk. Hidden when the browser has no speech recognition (design.md §19).
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { speechInputAvailable, startListening, type SpeechRecognizer } from "../voice";
 
 interface Props {
   disabled: boolean;
   onTranscript: (text: string) => void;
+  onListeningChange?: (listening: boolean) => void;
+  bindToggle?: (toggle: (() => void) | undefined) => void;
 }
 
-export function VoiceButton({ disabled, onTranscript }: Props) {
+export function VoiceButton({ disabled, onTranscript, onListeningChange, bindToggle }: Props) {
   const [recognition, setRecognition] = useState<SpeechRecognizer | null>(null);
-  if (!speechInputAvailable()) return null;
+  const available = speechInputAvailable();
   const listening = recognition !== null;
 
   function toggle() {
@@ -27,6 +29,18 @@ export function VoiceButton({ disabled, onTranscript }: Props) {
     next.onend = () => setRecognition(null);
     setRecognition(next);
   }
+
+  useEffect(() => {
+    onListeningChange?.(listening);
+  }, [listening, onListeningChange]);
+
+  useEffect(() => {
+    if (!available) return;
+    bindToggle?.(toggle);
+    return () => bindToggle?.(undefined);
+  });
+
+  if (!available) return null;
 
   return (
     <button
