@@ -28,6 +28,7 @@ class SystemPrompt:
 
 
 LEARNER_PROFILE_FILE = Path("prompts/learner_profile_v1.md")
+TOOLS_OFF_NOTE_FILE = Path("prompts/tools_off_note_v1.md")
 PROFILE_PLACEHOLDER = "{memories}"
 
 
@@ -47,6 +48,14 @@ def render_learner_profile(memories: list[str], path: str | Path = LEARNER_PROFI
         raise ValueError(f"{path} has no {PROFILE_PLACEHOLDER} placeholder.")
     bullets = "\n".join(f"- {text}" for text in memories)
     return template.replace(PROFILE_PLACEHOLDER, bullets)
+
+
+def with_tools_off_note(text: str, path: str | Path = TOOLS_OFF_NOTE_FILE) -> str:
+    """The newest user message as sent to the model when tools are off (never saved).
+
+    Without it, a prompt that teaches mX to search makes it try to, fail, and end with no text.
+    """
+    return f"{text}\n\n{load_prompt_file(path)}"
 
 
 def load_system_prompt(mode: str, path: str | Path) -> SystemPrompt:

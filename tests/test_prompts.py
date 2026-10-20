@@ -64,7 +64,7 @@ def test_real_mx_prompt_loads_in_both_modes():
     normal = load_system_prompt("normal", settings.system_prompt_file)
     brief = load_system_prompt("brief", settings.system_prompt_file)
 
-    assert normal.version == brief.version == "mx_system_v3"
+    assert normal.version == brief.version == "mx_system_v5"  # the default since 2026-10-20
     assert normal.text.startswith("You are mX")
     assert "Mode: normal" in normal.text and "Mode: brief" in brief.text
     assert "<!--" not in normal.text and "{mode}" not in normal.text
@@ -93,3 +93,18 @@ def test_check_mode():
     check_mode("normal")
     with pytest.raises(ValueError):
         check_mode("")
+
+
+def test_tools_off_note_is_appended_without_its_header():
+    from api.prompts import with_tools_off_note
+
+    text = with_tools_off_note("What's new in Python?")
+    assert text.startswith("What's new in Python?\n\n(Note from the mX app")
+    assert "<!--" not in text and "Always reply with text." in text
+
+
+def test_v5_prompt_loads_with_both_modes():
+    for mode in ("normal", "brief"):
+        prompt = load_system_prompt(mode, "prompts/mx_system_v5.md")
+        assert prompt.version == "mx_system_v5" and f"Mode: {mode}" in prompt.text
+    assert "at most 2 short spoken-style sentences" in load_system_prompt("brief", "prompts/mx_system_v5.md").text
