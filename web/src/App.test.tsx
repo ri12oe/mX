@@ -16,6 +16,7 @@ interface FakeApi {
   loggedOut: boolean;
   budget: { state: string; spent_usd: number; limit_usd: number; resets_at: string; month: string };
   storedSteps: unknown[]; // tool_steps on the stored assistant message
+  storedCitations: { url: string; title: string }[];
   toolsEnabled: boolean; // /whoami tools_enabled
 }
 
@@ -42,7 +43,7 @@ function installFakeApi(signedIn: boolean) {
   api = {
     signedIn, conversations: [], deleted: [], loggedOut: false, chat: () => new Response(null, { status: 500 }),
     budget: { state: "ok", spent_usd: 1.5, limit_usd: 20, resets_at: "2026-11-01T00:00:00-04:00", month: "2026-10" },
-    storedSteps: [], toolsEnabled: true,
+    storedSteps: [], storedCitations: [], toolsEnabled: true,
   };
   vi.stubGlobal(
     "fetch",
@@ -76,7 +77,7 @@ function installFakeApi(signedIn: boolean) {
           messages: [
             { id: "u1", role: "user", content: "Earlier question", image_refs: [], created_at: "" },
             { id: "a1", role: "assistant", content: "Earlier **answer**", image_refs: [], created_at: "",
-              tool_steps: api.storedSteps, citations: [] },
+              tool_steps: api.storedSteps, citations: api.storedCitations },
           ],
         });
       }
@@ -329,6 +330,16 @@ describe("chatting", () => {
     fireEvent.click(chip);
     expect(chip.closest("details")!.querySelectorAll("pre")[0].textContent).toBe("print(2**100)");
     await screen.findByText(/It is 1267650600228229401496703205376/);
+  });
+
+  it("reopening a chat shows its stored citations", async () => {
+    api.conversations = [{ id: "c1", title: "Old chat", created_at: "", updated_at: new Date().toISOString() }];
+    api.storedCitations = [{ url: "https://docs.python.org/3/", title: "Python docs" }];
+    render(<App />);
+    fireEvent.click(await screen.findByText("Old chat"));
+    const link = await screen.findByRole("link", { name: "Python docs" });
+    expect(link.getAttribute("href")).toBe("https://docs.python.org/3/");
+    expect(screen.getByText("Cited")).toBeTruthy();
   });
 
   it("reopening a chat shows its stored steps", async () => {

@@ -5,6 +5,8 @@ import pytest
 from api.config import settings
 from api.prompts import MODE_OPTIONS, MODES, check_mode, load_system_prompt
 
+V4_MARK = "Do not guess geometric properties"
+
 
 def write_prompt(tmp_path: Path, text: str, name: str = "test_prompt_v2.md") -> Path:
     path = tmp_path / name
@@ -72,6 +74,19 @@ def test_mode_options_match_design():
     assert set(MODE_OPTIONS) == set(MODES)
     assert MODE_OPTIONS["normal"] == {"max_tokens": 16000, "effort": "high"}
     assert MODE_OPTIONS["brief"] == {"max_tokens": 2048, "effort": "low"}
+
+
+def test_v4_loads_and_lives_only_in_the_prompt_file():
+    loaded = load_system_prompt("normal", Path("prompts/mx_system_v4.md"))
+    brief = load_system_prompt("brief", Path("prompts/mx_system_v4.md"))
+    assert loaded.version == "mx_system_v4"
+    assert "Mode: normal" in loaded.text and "Mode: brief" in brief.text
+    assert "{mode}" not in loaded.text and "<!--" not in loaded.text
+    for phrase in (V4_MARK, "they/them", "Never send an empty reply", "propose_memory", "rule of thumb"):
+        assert phrase in loaded.text
+    for folder in (Path("api"), Path("providers")):
+        for file in folder.rglob("*.py"):
+            assert V4_MARK not in file.read_text(encoding="utf-8")
 
 
 def test_check_mode():

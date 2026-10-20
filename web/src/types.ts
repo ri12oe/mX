@@ -82,8 +82,25 @@ export type ChatEvent =
   | { type: "delta"; text: string }
   | { type: "tool_start"; step_id: string; tool: string; input: ToolStep["input"] }
   | { type: "tool_end"; step_id: string; tool: string; status: "ok" | "error"; error_code: string | null; output: ToolStep["output"] }
+  | { type: "memory_suggestion"; suggestion_id: string; text: string }
   | { type: "done"; usage: Usage; stop_reason: string; budget?: Budget; citations?: Citation[] }
   | { type: "error"; code: string; message: string };
+
+/** A saved learner note (design.md §18). */
+export interface Memory {
+  id: string;
+  text: string;
+  source_conversation_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A proposal waiting in the browser until Rio saves or dismisses it. */
+export interface MemorySuggestion {
+  suggestion_id: string;
+  text: string;
+  conversationId?: string;
+}
 
 export interface ChatRequest {
   message: string;
@@ -140,4 +157,5 @@ export interface UiMessage {
   streaming?: boolean;
   steps?: ToolStep[]; // tool steps, in the order they started
   citations?: Citation[];
+  suggestions?: MemorySuggestion[]; // not stored; gone on reload
 }

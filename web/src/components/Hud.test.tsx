@@ -59,6 +59,7 @@ describe("StatusPanel", () => {
     mode: "normal" as const,
     budget: null,
     onOpenCost: () => {},
+    onOpenMemory: () => {},
     onSignOut: () => {},
   };
 

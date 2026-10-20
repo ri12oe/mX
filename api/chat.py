@@ -27,9 +27,12 @@ from api.config import settings
 from api.deps import get_db, get_provider, require_auth
 from api.images import ImageError, decode_images
 from api.pricing import cost_usd
-from api.prompts import MODE_OPTIONS, Mode, SystemPrompt, load_system_prompt
+from api.prompts import MODE_OPTIONS, Mode, SystemPrompt, load_system_prompt, render_learner_profile
+from api.tools import propose_memory_tool
 from providers import ModelProvider
-from providers.base import Citation, ImageData, Message, ModelResponse, SystemPart, ToolOptions, ToolStep, UsageMeter
+from providers.base import (
+    Citation, ClientTool, ImageData, Message, ModelResponse, SystemPart, ToolOptions, ToolStep, UsageMeter,
+)
 from providers.errors import (
     ProviderError,
     ProviderRateLimitError,
@@ -115,13 +118,24 @@ def apply_budget(conn: sqlite3.Connection, req: ChatRequest) -> TurnPolicy:
     return TurnPolicy(mode="brief" if forced else req.mode, tools=tools, forced=forced, budget=status)
 
 
-def tool_options(policy: TurnPolicy) -> ToolOptions | None:
-    """What the provider declares (design.md §17). None when tools are switched off server-wide;
-    otherwise the same definitions every time, with `enabled` saying whether they may be used."""
+def tools_for(enabled: bool, client_tools: tuple[ClientTool, ...] = ()) -> ToolOptions | None:
+    """The tool list for one turn (design.md §17). None when tools are switched off server-wide.
+
+    `enabled` False keeps the definitions (so the prompt cache holds) but the model may not call any.
+    Client tools stay in that list too; `tool_choice: none` is what stops a proposal.
+    The eval runner uses this too, so a case and a chat turn declare tools the same way.
+    """
     if not settings.tools_enabled:
         return None
-    return ToolOptions(enabled=policy.tools, code_execution=True, web_search=True,
-                       web_search_max_uses=settings.web_search_max_uses)
+    return ToolOptions(
+        enabled=enabled, code_execution=True, web_search=True,
+        web_search_max_uses=settings.web_search_max_uses, client_tools=client_tools,
+    )
+
+
+def tool_options(policy: TurnPolicy) -> ToolOptions | None:
+    """What the provider declares for a chat turn."""
+    return tools_for(policy.tools)
 
 
 def unique_citations(citations: list[Citation]) -> list[db.Citation]:
@@ -157,9 +171,11 @@ async def chat(
     policy = apply_budget(conn, req)
     pending = start_turn(conn, req, policy.mode)
     prompt = load_system_prompt(policy.mode, settings.system_prompt_file)
+    memories = [row["text"] for row in db.list_memories(conn)]
     stream = provider.stream(
-        pending.history, build_system(prompt), cache_messages=True, cache_ttl=settings.cache_ttl,
-        meter=pending.meter, tools=tool_options(policy), **MODE_OPTIONS[policy.mode],
+        pending.history, build_system(prompt, memories), cache_messages=True, cache_ttl=settings.cache_ttl,
+        meter=pending.meter, tools=tools_for(policy.tools, (propose_memory_tool(),)),
+        **MODE_OPTIONS[policy.mode],
     )
     next_item = asyncio.ensure_future(anext(stream))
     turn = TurnContext(pending, prompt, provider.name, conn, policy)
@@ -219,9 +235,16 @@ def load_window(conn: sqlite3.Connection, conversation_id: str) -> list[dict[str
     return db.get_recent_messages(conn, conversation_id, limit=stored - start)
 
 
-def build_system(prompt: SystemPrompt) -> list[SystemPart]:
-    """The system prompt as cacheable parts (design.md §15). The learner profile joins in week 4."""
-    return [SystemPart(prompt.text, cache=True)]
+def build_system(prompt: SystemPrompt, memories: list[str] | None = None) -> list[SystemPart]:
+    """The system prompt as cacheable parts (design.md §15, §18).
+
+    Part 2 is the learner profile, with its own breakpoint. No memories means no part 2,
+    so an empty profile doesn't change the cached prefix.
+    """
+    parts = [SystemPart(prompt.text, cache=True)]
+    if memories:
+        parts.append(SystemPart(render_learner_profile(memories), cache=True))
+    return parts
 
 
 def build_history(
@@ -298,7 +321,16 @@ class TurnContext:
         return chunk
 
     def tool_event(self, step: ToolStep) -> str | None:
-        """`tool_start` / `tool_end` for a server tool step; None for others (client tools, week 4)."""
+        """`tool_start` / `tool_end` for a server tool, or `memory_suggestion` for an accepted proposal.
+
+        A proposal is not a stored step. An error (a second proposal, bad text) sends nothing:
+        the model already got the tool result, and Rio has nothing to approve.
+        """
+        if step.tool == "propose_memory":
+            text = str(step.input.get("text", "")).strip()
+            if step.status != "ok" or not text:
+                return None
+            return sse("memory_suggestion", {"suggestion_id": step.id, "text": text})
         if step.tool not in SERVER_TOOLS:
             return None
         self.steps[step.id] = replace(step)

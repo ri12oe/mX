@@ -7,7 +7,9 @@ from typing import Any
 import anthropic
 from anthropic.types.beta import BetaMessage, BetaMessageParam
 
-from providers.base import Citation, Message, ModelResponse, SystemPrompt, ToolOptions, ToolStep, UsageMeter
+from providers.base import (
+    Citation, ClientTool, ClientToolResult, Message, ModelResponse, SystemPrompt, ToolOptions, ToolStep, UsageMeter,
+)
 from providers.errors import (
     ProviderAuthError,
     ProviderBadRequestError,
@@ -38,6 +40,7 @@ CODE_TOOL_NAMES = {"code_execution", "bash_code_execution", "text_editor_code_ex
 CODE_RESULT_TYPES = {"code_execution_tool_result", "bash_code_execution_tool_result",
                      "text_editor_code_execution_tool_result"}
 MAX_CONTINUATIONS = 3  # pause_turn resumes per turn; after that the reply ends as it is (design.md §6.1)
+MAX_CLIENT_ROUNDS = 2  # client-tool (propose_memory) rounds per turn (design.md §6.1)
 
 
 class AnthropicProvider:
@@ -81,17 +84,20 @@ class AnthropicProvider:
         base = self._params(messages, system, max_tokens, effort, cache_messages, cache_ttl, tools, opts)
         metering = _Metering(meter, cache_ttl)
         responses: list[BetaMessage] = []
+        client = ClientToolSession(tools)
         try:
             while True:
-                response = await self._client.beta.messages.create(**continuation_params(base, responses))
+                response = await self._client.beta.messages.create(**continuation_params(base, responses, client))
                 metering.request_started()
                 metering.update(response)
                 responses.append(response)
-                if not should_continue(responses):
+                if not should_continue(responses, tools):
                     break
+                if response.stop_reason == "tool_use":
+                    client.run(response)
         except anthropic.APIError as exc:
             raise map_error(exc) from exc
-        return combine_responses(responses, cache_ttl)
+        return combine_responses(responses, cache_ttl, client.steps)
 
     async def stream(
         self,
@@ -134,9 +140,10 @@ class AnthropicProvider:
         metering = _Metering(meter, cache_ttl)
         steps = ToolStepTracker()
         responses: list[BetaMessage] = []
+        client = ClientToolSession(tools)
         try:
             while True:
-                async with self._client.beta.messages.stream(**continuation_params(base, responses)) as stream:
+                async with self._client.beta.messages.stream(**continuation_params(base, responses, client)) as stream:
                     async for event in stream:
                         if event.type == "text":
                             yield event.text
@@ -149,11 +156,14 @@ class AnthropicProvider:
                                 metering.request_started()
                             metering.update(stream.current_message_snapshot)
                     responses.append(await stream.get_final_message())
-                if not should_continue(responses):
+                if not should_continue(responses, tools):
                     break
+                if responses[-1].stop_reason == "tool_use":
+                    for step in client.run(responses[-1]):
+                        yield step
         except anthropic.APIError as exc:
             raise map_error(exc) from exc
-        yield combine_responses(responses, cache_ttl)
+        yield combine_responses(responses, cache_ttl, client.steps)
 
     def _params(
         self,
@@ -291,10 +301,7 @@ def usage_counts(usage: Any, cache_ttl: str) -> dict[str, int]:
 
 
 def tool_definitions(tools: ToolOptions | None) -> list[dict[str, Any]]:
-    """Server tool definitions in a fixed order: code execution, then web search (design.md §15).
-
-    Client tools (propose_memory) join in week 4.
-    """
+    """Tool definitions in a fixed order: code execution, web search, then client tools (design.md §15)."""
     if tools is None:
         return []
     definitions: list[dict[str, Any]] = []
@@ -302,6 +309,14 @@ def tool_definitions(tools: ToolOptions | None) -> list[dict[str, Any]]:
         definitions.append(dict(CODE_EXECUTION_TOOL))
     if tools.web_search:
         definitions.append({"type": WEB_SEARCH_TOOL_TYPE, "name": "web_search", "max_uses": tools.web_search_max_uses})
+    for tool in tools.client_tools:
+        definitions.append({
+            "name": tool.name,
+            "description": tool.description,
+            "input_schema": tool.input_schema,
+            "strict": True,
+            "eager_input_streaming": True,
+        })
     return definitions
 
 
@@ -388,7 +403,7 @@ def visible_text(blocks: list[Any]) -> str:
         if block.type == "text":
             text += ("\n\n" if after_tool and text else "") + block.text
             after_tool = False
-        elif block.type == "server_tool_use" or block.type.endswith("_tool_result"):
+        elif block.type in ("server_tool_use", "tool_use") or block.type.endswith("_tool_result"):
             after_tool = True
     return text
 
@@ -398,7 +413,9 @@ def to_model_response(response: BetaMessage, cache_ttl: str = "5m") -> ModelResp
     return combine_responses([response], cache_ttl)
 
 
-def combine_responses(responses: list[BetaMessage], cache_ttl: str = "5m") -> ModelResponse:
+def combine_responses(
+    responses: list[BetaMessage], cache_ttl: str = "5m", client_steps: list[ToolStep] | None = None,
+) -> ModelResponse:
     """The whole turn: text, tool steps and citations from every request, usage summed.
 
     Keeps only the visible text; thinking blocks are internal to the model.
@@ -415,7 +432,7 @@ def combine_responses(responses: list[BetaMessage], cache_ttl: str = "5m") -> Mo
     for response in responses:
         for name, value in usage_counts(response.usage, cache_ttl).items():
             usage[name] += value
-    steps = tracker.final_steps()
+    steps = _with_client_steps(tracker.final_steps(), client_steps or [])
     # usage.server_tool_use is the source of truth; when it doesn't report a tool, count its steps
     # (design.md §9.1). Searches that error aren't billed, so only finished searches count.
     if not usage["code_runs"]:
@@ -436,28 +453,119 @@ def combine_responses(responses: list[BetaMessage], cache_ttl: str = "5m") -> Mo
 # --- The pause_turn loop (design.md §6.1) -------------------------------------
 
 
-def should_continue(responses: list[BetaMessage]) -> bool:
-    """Resume only a paused server tool loop, and only MAX_CONTINUATIONS times.
+def should_continue(responses: list[BetaMessage], tools: ToolOptions | None = None) -> bool:
+    """Resume a paused server tool loop, or a finished client-tool call (design.md §6.1).
 
-    Every other stop reason ends the turn. In particular a reply cut off by
-    `max_tokens` or ended by a `refusal` never continues, so a half-written
-    tool call is never acted on (client tools, week 4, rely on this).
+    `max_tokens` and `refusal` never continue, so a half-written tool call is never run.
+    A `tool_use` stop continues only when this request declared that client tool, and at
+    most MAX_CLIENT_ROUNDS times.
     """
-    return responses[-1].stop_reason == "pause_turn" and len(responses) <= MAX_CONTINUATIONS
+    last = responses[-1]
+    if last.stop_reason == "pause_turn":
+        pauses = sum(response.stop_reason == "pause_turn" for response in responses)
+        return pauses <= MAX_CONTINUATIONS
+    if last.stop_reason != "tool_use":
+        return False
+    known = _client_tools(tools)
+    if not known or not _client_uses(last, known):
+        return False
+    rounds = sum(bool(_client_uses(response, known)) for response in responses)
+    return rounds <= MAX_CLIENT_ROUNDS
 
 
-def continuation_params(base: dict[str, Any], responses: list[BetaMessage]) -> dict[str, Any]:
-    """The first request as built, or a continuation: the same request plus everything the
-    model produced so far as one assistant message (no extra user message), reusing its
-    code-execution container."""
+def continuation_params(
+    base: dict[str, Any], responses: list[BetaMessage], client: "ClientToolSession | None" = None,
+) -> dict[str, Any]:
+    """The next request in a turn.
+
+    A pause-only turn sends everything so far as one assistant message (no extra user
+    message). A client-tool turn alternates that assistant content with the tool results.
+    Either way the code-execution container is reused when the API sent one.
+    """
     if not responses:
         return base
-    content = [block_param(block) for response in responses for block in response.content]
-    params = {**base, "messages": [*base["messages"], {"role": "assistant", "content": content}]}
+    if client is not None and any(response.stop_reason == "tool_use" for response in responses):
+        extra: list[dict[str, Any]] = []
+        for response in responses:
+            extra.append({"role": "assistant", "content": [block_param(block) for block in response.content]})
+            if response.stop_reason == "tool_use":
+                results = client.results_for(response)
+                if results:
+                    extra.append({"role": "user", "content": results})
+        params = {**base, "messages": [*base["messages"], *extra]}
+    else:
+        content = [block_param(block) for response in responses for block in response.content]
+        params = {**base, "messages": [*base["messages"], {"role": "assistant", "content": content}]}
     container = next((r.container for r in reversed(responses) if r.container is not None), None)
     if container is not None:
         params["container"] = container.id
     return params
+
+
+def _client_tools(tools: ToolOptions | None) -> dict[str, ClientTool]:
+    if tools is None:
+        return {}
+    return {tool.name: tool for tool in tools.client_tools}
+
+
+def _client_uses(message: BetaMessage, known: dict[str, ClientTool]) -> list[Any]:
+    return [
+        block for block in message.content
+        if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) in known
+    ]
+
+
+def _with_client_steps(steps: list[ToolStep], client_steps: list[ToolStep]) -> list[ToolStep]:
+    """Server steps, then each client step's final state (the running yield is dropped)."""
+    finals = [step for step in client_steps if step.status != "running"]
+    if not finals:
+        return steps
+    seen = {step.id for step in steps}
+    return [*steps, *[step for step in finals if step.id not in seen]]
+
+
+class ClientToolSession:
+    """Runs client tools for one turn and remembers each result so a rebuilt request doesn't run them twice."""
+
+    def __init__(self, tools: ToolOptions | None) -> None:
+        self.known = _client_tools(tools)
+        self.steps: list[ToolStep] = []
+        self._results: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+
+    def run(self, message: BetaMessage) -> list[ToolStep]:
+        """Execute this reply's client tool calls once. Later calls return nothing."""
+        key = self._key(message)
+        if key in self._results:
+            return []
+        produced: list[ToolStep] = []
+        results: list[dict[str, Any]] = []
+        for block in _client_uses(message, self.known):
+            raw = block.input if isinstance(block.input, dict) else {}
+            produced.append(ToolStep(block.id, block.name, "running", raw))
+            try:
+                result = self.known[block.name].run(raw)
+            except Exception:
+                result = ClientToolResult("The tool failed.", is_error=True)
+            produced.append(ToolStep(
+                block.id, block.name, "error" if result.is_error else "ok", raw,
+                {"text": result.text}, "tool_error" if result.is_error else None,
+            ))
+            results.append({
+                "type": "tool_result", "tool_use_id": block.id,
+                "content": result.text, "is_error": result.is_error,
+            })
+        self._results[key] = results
+        self.steps.extend(produced)
+        return produced
+
+    def results_for(self, message: BetaMessage) -> list[dict[str, Any]]:
+        key = self._key(message)
+        if key not in self._results:
+            self.run(message)
+        return self._results[key]
+
+    def _key(self, message: BetaMessage) -> tuple[str, ...]:
+        return tuple(block.id for block in _client_uses(message, self.known))
 
 
 def block_param(block: Any) -> dict[str, Any]:

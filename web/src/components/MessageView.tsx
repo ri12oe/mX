@@ -1,9 +1,16 @@
 import type { UiMessage, Usage } from "../types";
 import { Markdown } from "./Markdown";
+import { MemorySuggestion } from "./MemorySuggestion";
+import { Sources } from "./Sources";
 import { StoredImage } from "./StoredImage";
 import { ToolSteps } from "./ToolSteps";
 
-export function MessageView({ message }: { message: UiMessage }) {
+export function MessageView({
+  message, onDismissMemory,
+}: {
+  message: UiMessage;
+  onDismissMemory?: (suggestionId: string) => void;
+}) {
   const hasImages = message.images.length > 0 || message.imageRefs.length > 0;
   const images = hasImages && (
     <div className="thumbs">
@@ -42,6 +49,14 @@ export function MessageView({ message }: { message: UiMessage }) {
           <Markdown text={message.content} />
         )}
         {message.streaming && message.content && <span className="caret" aria-hidden="true" />}
+        <Sources citations={message.citations} steps={steps} />
+        {message.suggestions?.map((suggestion) => (
+          <MemorySuggestion
+            key={suggestion.suggestion_id}
+            suggestion={suggestion}
+            onDismiss={(id) => onDismissMemory?.(id)}
+          />
+        ))}
         {message.stopReason === "max_tokens" && (
           <div className="note warn">This reply hit its length limit and was cut off.</div>
         )}

@@ -18,12 +18,13 @@ interface Props {
   mode: Mode;
   budget: Budget | null;
   onOpenCost: () => void;
+  onOpenMemory: () => void;
   onSignOut: () => void;
 }
 
 /** Right-hand HUD: the core plus real readouts only (no decorative fake data). */
 export function StatusPanel({
-  coreState, model, lastUsage, session, conversationCount, mode, budget, onOpenCost, onSignOut,
+  coreState, model, lastUsage, session, conversationCount, mode, budget, onOpenCost, onOpenMemory, onSignOut,
 }: Props) {
   return (
     <aside className="status-panel" aria-label="System status">
@@ -35,6 +36,7 @@ export function StatusPanel({
         <Row label="Mode" value={mode === "brief" ? "Brief" : "Normal"} />
       </Readout>
       <MonthReadout budget={budget} onOpenCost={onOpenCost} />
+      <button type="button" className="cost-link" onClick={onOpenMemory}>Memory</button>
       <Readout title="Last reply">
         {lastUsage ? (
           <>

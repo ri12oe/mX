@@ -27,6 +27,28 @@ class SystemPrompt:
     version: str  # file name without extension, stored in usage.prompt_version
 
 
+LEARNER_PROFILE_FILE = Path("prompts/learner_profile_v1.md")
+PROFILE_PLACEHOLDER = "{memories}"
+
+
+def load_prompt_file(path: str | Path) -> str:
+    """Read a prompt file and drop its <!-- notes --> header. No placeholders are filled."""
+    return _COMMENT.sub("", Path(path).read_text(encoding="utf-8")).strip()
+
+
+def render_learner_profile(memories: list[str], path: str | Path = LEARNER_PROFILE_FILE) -> str:
+    """System part 2: the approved notes, in the order given (design.md §18).
+
+    The caller orders them (created_at, then id). An empty list is not rendered;
+    the chat route omits the part instead of sending an empty block.
+    """
+    template = load_prompt_file(path)
+    if PROFILE_PLACEHOLDER not in template:
+        raise ValueError(f"{path} has no {PROFILE_PLACEHOLDER} placeholder.")
+    bullets = "\n".join(f"- {text}" for text in memories)
+    return template.replace(PROFILE_PLACEHOLDER, bullets)
+
+
 def load_system_prompt(mode: str, path: str | Path) -> SystemPrompt:
     """Read the prompt file, drop <!-- notes -->, and fill in the mode.
 

@@ -2,6 +2,8 @@
 
 Owner: Rio · Status: **Draft, awaiting Rio's review** · Last updated: 2026-10-01
 
+> Status (2026-10-20): the Phase 2 tasks in `TASKS.md` are implemented except the paid eval runs (tasks 20 and 26), which wait on Rio's OK. `prompts/mx_system_v4.md` exists and is not the default. See `docs/phase2-review.md`.
+>
 > v0.5 change (2026-10-01): **Phase 2 design.** Phase 1 (v0.3 plus the Week 4–5 changes in §13) is shipped and
 > its sections stay accurate; Phase 2 additions are marked **"Phase 2"**. New: schema migrations (§7.1), prompt
 > caching (§15), cost page and budget guard (§16), tools: code execution and web search (§17), long-term memory

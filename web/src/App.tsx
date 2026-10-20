@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteConversation, getBudget, getConversation, isSignedOut, listConversations, logout, streamChat, whoami,
 } from "./api";
+import { speak, stopSpeaking } from "./voice";
 import { BudgetBanner } from "./components/BudgetBanner";
 import { Composer } from "./components/Composer";
 import { CostPanel } from "./components/CostPanel";
+import { MemoryPanel } from "./components/MemoryPanel";
 import { LoginDialog } from "./components/LoginDialog";
 import { MessageView } from "./components/MessageView";
 import { Core, type CoreState } from "./components/Core";
@@ -57,6 +59,9 @@ export default function App() {
   const [session, setSession] = useState<SessionStats>({ replies: 0, costUsd: 0, unknownCost: false });
   const [historyOpen, setHistoryOpen] = useState(false);
   const [costOpen, setCostOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const voicePending = useRef(false);
   const [budget, setBudget] = useState<Budget | null>(null);
   const [overrideArmed, setOverrideArmed] = useState(false); // next message ignores the budget's brief mode
   const [warningDismissed, setWarningDismissed] = useState(false); // the 80% warning, once per session
@@ -180,6 +185,19 @@ export default function App() {
     saveMode(next);
   }
 
+  function dismissSuggestion(messageId: string, suggestionId: string) {
+    setMessages((all) => all.map((m) => (
+      m.id === messageId
+        ? { ...m, suggestions: m.suggestions?.filter((s) => s.suggestion_id !== suggestionId) }
+        : m
+    )));
+  }
+
+  function changeDraft(text: string) {
+    if (!text.trim()) voicePending.current = false;
+    setDraft(text);
+  }
+
   function changeTools(on: boolean) {
     setTools(on);
     saveTools(on);
@@ -195,6 +213,9 @@ export default function App() {
       { id: tempId(), role: "user", content: text, images, imageRefs: [] },
       { id: assistantId, role: "assistant", content: "", images: [], imageRefs: [], streaming: true },
     ]);
+    const fromVoice = voicePending.current;
+    voicePending.current = false;
+    let replyText = "";
     setDraft("");
     setBanner(null);
     setStreaming(true);
@@ -216,7 +237,15 @@ export default function App() {
           if (event.budget) setBudget(event.budget);
           break;
         case "delta":
+          replyText += event.text;
           update((m) => ({ content: m.content + event.text }));
+          break;
+        case "memory_suggestion":
+          update((m) => ({
+            suggestions: [...(m.suggestions ?? []), {
+              suggestion_id: event.suggestion_id, text: event.text, conversationId: conversationId ?? undefined,
+            }],
+          }));
           break;
         case "tool_start":
           update((m) => ({ steps: withStep(m.steps, { id: event.step_id, tool: event.tool, status: "running", input: event.input }) }));
@@ -238,6 +267,10 @@ export default function App() {
           setActiveId(conversationId);
           setLastUsage(event.usage);
           if (event.budget) setBudget(event.budget);
+          if (fromVoice) {
+            setSpeaking(true);
+            speak(replyText, () => setSpeaking(false));
+          }
           setSession((s) => ({
             replies: s.replies + 1,
             costUsd: s.costUsd + (event.usage.cost_usd ?? 0),
@@ -255,7 +288,7 @@ export default function App() {
       await streamChat(
         {
           message: text,
-          mode,
+          mode: fromVoice ? "brief" : mode,
           conversation_id: activeId ?? undefined,
           images: images.length ? images : undefined,
           ...(budgetOverride ? { budget_override: true } : {}),
@@ -320,6 +353,10 @@ export default function App() {
             onClick={() => setCostOpen(true)} aria-label="Open cost details" title="Cost">
             $
           </button>
+          <button type="button" className="icon-button memory-button" onClick={() => setMemoryOpen(true)}
+            aria-label="Open memories" title="Memory">
+            M
+          </button>
         </header>
 
         {banner && (
@@ -354,7 +391,11 @@ export default function App() {
           ) : (
             <div className="message-column">
               {messages.map((m) => (
-                <MessageView key={m.id} message={m} />
+                <MessageView
+                  key={m.id}
+                  message={m}
+                  onDismissMemory={(suggestionId) => dismissSuggestion(m.id, suggestionId)}
+                />
               ))}
               <div ref={bottomRef} />
             </div>
@@ -364,7 +405,16 @@ export default function App() {
         <div className="composer-area">
           <Composer
             text={draft}
-            onTextChange={setDraft}
+            onTextChange={changeDraft}
+            onVoiceTranscript={(text) => {
+              voicePending.current = true;
+              setDraft(text);
+            }}
+            speaking={speaking}
+            onStopSpeech={() => {
+              stopSpeaking();
+              setSpeaking(false);
+            }}
             mode={mode}
             onModeChange={changeMode}
             tools={tools}
@@ -385,10 +435,12 @@ export default function App() {
         mode={mode}
         budget={budget}
         onOpenCost={() => setCostOpen(true)}
+        onOpenMemory={() => setMemoryOpen(true)}
         onSignOut={() => void signOut()}
       />
 
       {costOpen && <CostPanel onClose={() => setCostOpen(false)} />}
+      {memoryOpen && <MemoryPanel onClose={() => setMemoryOpen(false)} />}
 
       {historyOpen && (
         <HistoryPanel

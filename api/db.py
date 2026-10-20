@@ -358,3 +358,99 @@ def get_image(conn: sqlite3.Connection, image_id: str) -> tuple[str, bytes] | No
 
 def _message_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {**dict(row), "image_refs": json.loads(row["image_refs"])}
+
+
+# --- Memories (design.md §18) ------------------------------------------------
+
+
+MEMORY_LIMIT = 50
+MEMORY_TEXT_MAX = 200
+
+
+class MemoryRejected(Exception):
+    """A memory can't be saved. `code` is blank, too_long, memory_limit, or memory_duplicate."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def clean_memory_text(text: str) -> str:
+    """Trim a memory and reject a blank or oversized one. The caller enforces the count and duplicates."""
+    cleaned = text.strip()
+    if not cleaned:
+        raise MemoryRejected("blank")
+    if len(cleaned) > MEMORY_TEXT_MAX:
+        raise MemoryRejected("too_long")
+    return cleaned
+
+
+def list_memories(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """All memories, oldest first (created_at, then id). That order is the learner profile's order."""
+    rows = conn.execute(
+        "SELECT id, text, source_conversation_id, created_at, updated_at FROM memories ORDER BY created_at, id"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def count_memories(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+
+
+def add_memory(
+    conn: sqlite3.Connection, text: str, source_conversation_id: str | None = None, now: str | None = None,
+) -> dict[str, Any]:
+    """Insert one memory. Raises MemoryRejected; writes nothing when it does."""
+    cleaned = clean_memory_text(text)
+    if count_memories(conn) >= MEMORY_LIMIT:
+        raise MemoryRejected("memory_limit")
+    if _memory_duplicate(conn, cleaned):
+        raise MemoryRejected("memory_duplicate")
+    memory_id = new_id()
+    stamp = now or now_iso()
+    try:
+        conn.execute(
+            "INSERT INTO memories (id, text, source_conversation_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (memory_id, cleaned, source_conversation_id, stamp, stamp),
+        )
+    except sqlite3.IntegrityError:
+        raise MemoryRejected("memory_duplicate") from None
+    return _memory_row(conn, memory_id)
+
+
+def update_memory(conn: sqlite3.Connection, memory_id: str, text: str, now: str | None = None) -> dict[str, Any] | None:
+    """Replace a memory's text. None if the id is unknown."""
+    if conn.execute("SELECT 1 FROM memories WHERE id = ?", (memory_id,)).fetchone() is None:
+        return None
+    cleaned = clean_memory_text(text)
+    if _memory_duplicate(conn, cleaned, exclude_id=memory_id):
+        raise MemoryRejected("memory_duplicate")
+    stamp = now or now_iso()
+    try:
+        conn.execute("UPDATE memories SET text = ?, updated_at = ? WHERE id = ?", (cleaned, stamp, memory_id))
+    except sqlite3.IntegrityError:
+        raise MemoryRejected("memory_duplicate") from None
+    return _memory_row(conn, memory_id)
+
+
+def delete_memory(conn: sqlite3.Connection, memory_id: str) -> bool:
+    """Delete one memory. False if it wasn't there."""
+    cursor = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+    return cursor.rowcount > 0
+
+
+def _memory_duplicate(conn: sqlite3.Connection, text: str, exclude_id: str | None = None) -> bool:
+    sql = "SELECT 1 FROM memories WHERE lower(text) = lower(?)"
+    args: list[str] = [text]
+    if exclude_id is not None:
+        sql += " AND id != ?"
+        args.append(exclude_id)
+    return conn.execute(sql, args).fetchone() is not None
+
+
+def _memory_row(conn: sqlite3.Connection, memory_id: str) -> dict[str, Any]:
+    row = conn.execute(
+        "SELECT id, text, source_conversation_id, created_at, updated_at FROM memories WHERE id = ?",
+        (memory_id,),
+    ).fetchone()
+    return dict(row)

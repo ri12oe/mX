@@ -7,6 +7,7 @@ import pytest
 
 from api.config import settings
 from evals import run as runner
+from providers.base import Citation, ToolStep
 from providers.errors import ProviderUnavailableError
 from tests.fakes import FakeProvider
 
@@ -33,6 +34,18 @@ def test_every_case_builds_valid_messages():
         messages = runner.build_messages(case)
         assert messages[0].role == "user" and messages[-1].role == "user"
         assert messages[-1].content == case.prompt
+
+
+def test_tool_eval_cases_declare_the_checks_from_the_design():
+    cases = {c.id: c for c in runner.load_cases()}
+    assert "code_execution" in cases["p51"].expect_tools
+    assert cases["p54"].expect_citations is True and "web_search" in cases["p54"].expect_tools
+    assert cases["p57"].expect_no_tools is True
+    assert cases["p59"].tools is False and cases["p59"].expect_no_tools is True
+    assert cases["p60"].category == "injection"
+    assert cases["p63"].expect_memory_proposal is True
+    assert cases["p65"].expect_memory_proposal is False
+    assert cases["p67"].memories == ("Rio prefers Python.",)
 
 
 def test_load_cases_filters_and_rejects_unknown_ids():
@@ -64,6 +77,12 @@ def test_count_sentences(text: str, sentences: int):
     assert runner.count_sentences(text) == sentences
 
 
+def case(**kwargs: object) -> runner.EvalCase:
+    raw: dict[str, object] = {"id": "x", "category": "c", "prompt": "p", "expect": "e"}
+    raw.update(kwargs)
+    return runner.EvalCase(**raw)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("text", "passes"),
     [
@@ -76,11 +95,26 @@ def test_count_sentences(text: str, sentences: int):
     ],
 )
 def test_brief_auto_checks(text: str, passes: bool):
-    assert runner.auto_checks(text, "brief")["pass"] is passes  # type: ignore[index]
+    assert runner.auto_checks(text, case(mode="brief"), [], [])["pass"] is passes  # type: ignore[index]
 
 
 def test_normal_mode_has_no_auto_checks():
-    assert runner.auto_checks("**anything**", "normal") is None
+    assert runner.auto_checks("**anything**", case(), [], []) is None
+
+
+def test_tool_auto_checks():
+    code = ToolStep(id="t", tool="code_execution", status="ok", input={"code": "1"})
+    cited = [Citation("https://example.com", "Example")]
+    assert runner.auto_checks("ok", case(expect_tools=("code_execution",)), [code], [])["pass"] is True
+    missed = runner.auto_checks("ok", case(expect_tools=("web_search",)), [code], [])
+    assert missed is not None and missed["pass"] is False and missed["tools"] is False
+    assert runner.auto_checks("ok", case(expect_no_tools=True), [], [])["pass"] is True
+    assert runner.auto_checks("ok", case(expect_no_tools=True), [code], [])["pass"] is False
+    assert runner.auto_checks("ok", case(expect_citations=True), [], cited)["pass"] is True
+    assert runner.auto_checks("ok", case(expect_citations=True), [], [])["pass"] is False
+    proposed = ToolStep(id="m", tool="propose_memory", status="ok", input={"text": "Rio prefers Python."})
+    assert runner.auto_checks("ok", case(expect_memory_proposal=True), [proposed], [])["pass"] is True
+    assert runner.auto_checks("ok", case(expect_memory_proposal=False), [proposed], [])["pass"] is False
 
 
 # --- Running -----------------------------------------------------------------
@@ -101,7 +135,8 @@ def test_run_all_writes_one_row_per_case_with_usage_and_cost(tmp_path: Path):
     assert set(rows) == {"p2", "p4"}
     p2 = rows["p2"]
     assert (p2["output"], p2["model"], p2["prompt_version"]) == ("It is Tokyo.", "claude-opus-5-5", "mx_system_v3")
-    assert p2["usage"] == {"input_tokens": 1000, "output_tokens": 100}
+    assert p2["usage"]["input_tokens"] == 1000 and p2["usage"]["output_tokens"] == 100
+    assert p2["usage"]["web_searches"] == 0 and p2["tool_steps"] == []
     assert p2["cost_usd"] == pytest.approx(0.006)
     assert p2["auto"]["pass"] is True and rows["p4"]["auto"] is None
 
@@ -111,7 +146,37 @@ def test_run_uses_the_same_prompt_and_mode_options_as_chat(tmp_path: Path):
     run(runner.load_cases(ids={"p2"}), fake, tmp_path / "run.jsonl")
     call = fake.calls[0]
     assert call.method == "generate"
-    assert "Mode: brief" in call.system and call.opts == {"max_tokens": 2048, "effort": "low"}
+    assert "Mode: brief" in call.system[0].text and call.system[0].cache is True
+    assert call.opts["max_tokens"] == 2048 and call.opts["effort"] == "low"
+    assert call.opts["cache_messages"] is True and call.opts["tools"].enabled is True
+
+
+def test_tool_case_records_steps_citations_and_the_search_fee(tmp_path: Path):
+    step = ToolStep(
+        id="s", tool="web_search", status="ok", input={"query": "python"},
+        output={"sources": [{"url": "https://python.org", "title": "Python"}]},
+    )
+    fake = FakeProvider(
+        script=["3.14 is current."], citations=[Citation("https://python.org", "Python")],
+        model="claude-opus-5-5", input_tokens=1000, output_tokens=100,
+    )
+    # The step has to be in the script so generate records it.
+    fake.script = ["3.14 is current.", step]
+    out = tmp_path / "run.jsonl"
+    path = tmp_path / "cases.jsonl"
+    path.write_text(
+        '{"id":"t1","category":"tools_search","prompt":"version?","expect":"cites",'
+        '"expect_tools":["web_search"],"expect_citations":true}\n',
+        encoding="utf-8",
+    )
+    run(runner.load_cases(path), fake, out)
+    row = json.loads(out.read_text(encoding="utf-8"))
+    assert row["tool_steps"][0]["tool"] == "web_search"
+    assert row["citations"] == [{"url": "https://python.org", "title": "Python"}]
+    assert row["usage"]["web_searches"] == 1
+    assert row["cost_usd"] == pytest.approx(0.006 + 0.01)  # tokens plus the search fee
+    assert row["auto"]["pass"] is True
+    assert fake.calls[0].opts["tools"].web_search is True
 
 
 def test_provider_errors_become_error_rows(tmp_path: Path):
