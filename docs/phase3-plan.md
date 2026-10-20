@@ -88,6 +88,27 @@ and a speaker are nice to have.
   fits best).
 - Outdoors in bright sun, reviewers say the sunglass clip-on ($99) is needed.
 
+**Could the Meta Ray-Ban Display give us the camera? (researched 2026-10-20)**
+- **Web apps** (HTML/JS, added by typing a URL in the Meta AI phone app with Developer Mode on; **no Mac**):
+  they run on the glasses and can use motion, phone GPS, the Neural Band, local storage, and text input by
+  **dictation**. **The camera and microphone are not listed for web apps.** It's also unclear whether they
+  can reach a private Tailscale address; Meta's docs assume a hosted server.
+- **The camera needs the native Device Access Toolkit** (Swift on iPhone), which means **Xcode on a Mac**,
+  or an Android phone (Kotlin).
+- So with an iPhone and a Windows laptop, the Meta glasses give a display plus dictation, **but no camera**:
+  the same as the G2, for $200 more, with a one-lens 600×600 display, still a developer preview.
+- **Revisit if** Meta adds the camera to web apps, or Rio gets a Mac.
+
+**DIY glasses (researched 2026-10-20):** possible, but a hardware project, not a weekend:
+- **Display:** the LILYGO T-Glass (ESP32-S3, 1.1" color prism display, mic, touch button; no camera) is the
+  closest kit. The text area is small, and an ESP32 can show simple text but not a rich chat UI.
+- **Camera:** OpenGlass (an ESP32-S3 camera on any frame, under $25 in parts) shows the idea, but has **no
+  display** and is no longer maintained (moved to Omi).
+- **Combining both** means custom wiring, a 3D-printed mount, batteries, firmware, and optics. The hardest
+  part, a bright, readable see-through display, is what the $599 G2 already solves. An ESP32 also can't join
+  Tailscale, so it would need the laptop as a Bluetooth bridge (desk only), or a phone app (Mac again on iPhone).
+- A fun Phase 4 side project, not the path to reading the chat on your glasses this term.
+
 **Verify before buying** (a short W1 spike using the Even Hub **simulator**, which is free with no glasses):
 1. A G2 app can call mX over Tailscale (whitelist + CORS) from the iPhone.
 2. The SDK gives apps the **microphone** stream (the hardware has it; the API isn't confirmed in the docs I read).
@@ -211,6 +232,12 @@ download (keep upload) → iPhone-camera "look" (keep reading + voice on the gla
   architecture <https://hub.evenrealities.com/docs/get-started/architecture>, FAQ (network whitelist, CORS)
   <https://hub.evenrealities.com/docs/reference/faq>, local testing <https://hub.evenrealities.com/docs/test/local-testing>
 - G2 display specs (27.5° FoV): <https://www.knoxlabs.com/products/even-realities-g2-ai-glasses>, <https://heise.de/-11076939>
+- Meta web apps and toolkit: <https://developers.meta.com/wearables/faq/>,
+  <https://ppc.land/meta-opens-display-glasses-to-developers-with-two-sdk-paths/>,
+  <https://wearables.developer.meta.com/docs/develop/dat/display-overview/>
+- DIY: OpenGlass <https://github.com/BasedHardware/OpenGlass>, LILYGO T-Glass
+  <https://www.cnx-software.com/2024/07/01/lilygo-t-glass-esp32-powered-smart-glasses-with-1-1-inch-prism-display-imu-microphone/>;
+  MentraOS (open-source glasses OS) <https://heise.de/-10475558>
 - Halo display (0.2" OLEDoS, glance display): <https://docs.brilliant.xyz/halo/hardware/>,
   <https://www.auganix.org/xr-news-brilliant-labs-halo-ai-glasses/>
 
