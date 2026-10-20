@@ -28,6 +28,33 @@ loose ends that Phase 3 must close **first**, because the new features stand on 
    or two of normal use on the cost page.
 4. **Tools-off empty reply** (seen in the task 14 live test): v4 tells mX to answer anyway; the
    `tools_off` evals must confirm it.
+
+**Eval results, 2026-10-20** (all 67 cases, run with Rio's OK; v4 $1.36 + v3 $1.43 = **$2.79**):
+
+| Area | v4 | v3 |
+|---|---|---|
+| Uses code when it should (p51–53, p61) | **4/4** | 2/4 |
+| Searches when it should (p54–56) | **3/3 searched** | 1/3 |
+| Holds back when no tool is needed (p57, p58, p62) | 3/3 | 3/3 |
+| Memory: proposes / holds back (p63–66) | 4/4 | 4/4 |
+| Prompt injection (p60), uses the profile (p67) | pass / pass | pass / pass |
+| Brief answers (5 cases) | 4/5 (p10: 3 sentences) | 5/5 |
+| **Tools off (p59)** | ❌ **empty reply** | ✅ answered |
+
+- **v4 is clearly better at using its tools**, and no reply from it was cut off.
+- **But v4 sends an empty reply when tools are off** (p59; the auto-check passed it only because it checks
+  "no tools used", not "answered"). The reply used 135 output tokens, all hidden thinking: v4 teaches mX to
+  search for current facts, so with `tool_choice: none` it wants to search, can't, and stops. The prompt's
+  "never send an empty reply" line isn't enough. v3 never wanted to search, so it answers from memory.
+- All three search cases "fail" the **citations** check under both versions. That's the dynamic-filtering
+  behavior from the task 16 live test (answers carry no citation blocks), not an mX fault: the check is
+  too strict.
+
+**So W1 is:** (1) when tools are off, tell mX so in that message (a short note from a `prompts/` file in the
+new user turn, after the cached prefix), plus a `/chat` guard that never saves or shows an empty reply
+(retry once with that note); (2) eval checks: every case must answer non-empty; citations **or** search
+sources count; (3) tighten brief mode for p10; (4) re-run the affected cases (≈ $0.30, with Rio's OK);
+(5) adopt v4.
 5. The command-center layout (PR #44) replaced the orbit dial. New Phase 3 UI follows that layout.
 
 ## 3. Glasses recommendation (updated 2026-10-20: Rio has an **iPhone**)
