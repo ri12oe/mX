@@ -3,7 +3,10 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { coreStateFor } from "../App";
 import type { UiMessage } from "../types";
+import { Activity, latestAssistant } from "./Activity";
+import { CommandRail } from "./CommandRail";
 import { arc, Core, CORE_LABELS, type CoreState } from "./Core";
+import { Overview } from "./Overview";
 import { Clock, formatCost, StatusPanel } from "./StatusPanel";
 
 afterEach(() => {
@@ -125,6 +128,89 @@ describe("StatusPanel", () => {
   it("formats unknown costs", () => {
     expect(formatCost(null)).toBe("unknown");
     expect(formatCost(0.00012)).toBe("$0.0001");
+  });
+});
+
+describe("command center", () => {
+  it("lists recent chats and wires the rail", () => {
+    const onOpenHistory = vi.fn();
+    const onOpenMemory = vi.fn();
+    const onOpenCost = vi.fn();
+    const onSignOut = vi.fn();
+    const onSpeak = vi.fn();
+    render(
+      <CommandRail
+        coreState="idle"
+        conversations={[
+          { id: "c1", title: "Calc practice", created_at: "", updated_at: "" },
+          { id: "c2", title: "Python loop", created_at: "", updated_at: "" },
+        ]}
+        activeId="c1"
+        voice="unavailable"
+        canSpeak={false}
+        onCommand={() => {}}
+        onNew={() => {}}
+        onSelect={() => {}}
+        onOpenHistory={onOpenHistory}
+        onOpenMemory={onOpenMemory}
+        onOpenCost={onOpenCost}
+        onSpeak={onSpeak}
+        onSignOut={onSignOut}
+      />,
+    );
+    const chats = screen.getByRole("complementary", { name: "Conversations" });
+    expect(within(chats).getByText("Calc practice")).toBeTruthy();
+    expect(within(chats).getByRole("button", { name: "All chats" }).textContent).toBe("All chats · 2");
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "All chats" }));
+    fireEvent.click(screen.getByRole("button", { name: "Memory" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cost" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(onOpenHistory).toHaveBeenCalled();
+    expect(onOpenMemory).toHaveBeenCalled();
+    expect(onOpenCost).toHaveBeenCalled();
+    expect(onSignOut).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Tap to speak" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to speak" }));
+    expect(onSpeak).not.toHaveBeenCalled();
+  });
+
+  it("shows live overview tiles, including the month", () => {
+    const onOpenCost = vi.fn();
+    render(
+      <Overview
+        coreState="thinking"
+        memoryCount={4}
+        voice="online"
+        toolsOn
+        toolsAvailable
+        model="claude-opus-5-5"
+        budget={{ state: "warning", spent_usd: 16.5, limit_usd: 20, resets_at: "2026-11-01T00:00:00-04:00" }}
+        onOpenCost={onOpenCost}
+      />,
+    );
+    expect(within(screen.getByRole("region", { name: "Core" })).getByText("Thinking")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Memory" })).getByText("4")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Voice" })).getByText("Online")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Tools" })).getByText("On")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Model" })).getByText("claude-opus-5-5")).toBeTruthy();
+    const month = screen.getByRole("region", { name: "Month" });
+    expect(within(month).getByText("$16.50 / $20.00")).toBeTruthy();
+    expect(within(month).getByText("Warning")).toBeTruthy();
+    expect(within(month).getByRole("meter").getAttribute("aria-valuenow")).toBe("83");
+    fireEvent.click(within(month).getByRole("button", { name: "Cost details" }));
+    expect(onOpenCost).toHaveBeenCalled();
+  });
+
+  it("reports this session's steps and an empty feed", () => {
+    const message = msg({
+      steps: [{ id: "t1", tool: "code_execution", status: "ok", input: { code: "print(1)" } }],
+    });
+    const { rerender } = render(<Activity message={message} suggestions={["Plan a gadget"]} onSuggest={() => {}} />);
+    expect(within(screen.getByRole("complementary", { name: "This session" })).getByText("Ran code")).toBeTruthy();
+    expect(latestAssistant([msg({ role: "user", content: "q" }), message])?.id).toBe("m");
+    rerender(<Activity message={undefined} suggestions={["Plan a gadget"]} onSuggest={() => {}} />);
+    expect(screen.getByText("No activity this session.")).toBeTruthy();
   });
 });
 

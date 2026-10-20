@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  deleteConversation, getBudget, getConversation, isSignedOut, listConversations, logout, streamChat, whoami,
+  deleteConversation, getBudget, getConversation, isSignedOut, listConversations, listMemories, logout, streamChat, whoami,
 } from "./api";
-import { speak, stopSpeaking } from "./voice";
+import { speak, speechInputAvailable, speechOutputAvailable, stopSpeaking } from "./voice";
+import { Activity, latestAssistant } from "./components/Activity";
 import { BudgetBanner } from "./components/BudgetBanner";
+import { CommandRail, type VoiceStatus } from "./components/CommandRail";
 import { Composer } from "./components/Composer";
 import { CostPanel } from "./components/CostPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { LoginDialog } from "./components/LoginDialog";
 import { MessageView } from "./components/MessageView";
+import { Overview } from "./components/Overview";
 import { Core, type CoreState } from "./components/Core";
 import { HistoryPanel } from "./components/HistoryPanel";
-import { OrbitDial } from "./components/OrbitDial";
-import { StatusPanel, type SessionStats } from "./components/StatusPanel";
+import { Clock } from "./components/StatusPanel";
 import { loadMode, loadTools, saveMode, saveTools } from "./settings";
-import type { Budget, ChatEvent, ConversationSummary, Mode, StoredMessage, ToolStep, UiMessage, Usage } from "./types";
+import type { Budget, ChatEvent, ConversationSummary, Mode, StoredMessage, ToolStep, UiMessage } from "./types";
 
 const SUGGESTIONS = [
   "Explain integration by parts with a worked example",
@@ -55,13 +57,17 @@ export default function App() {
   const [streaming, setStreaming] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [model, setModel] = useState<string | null>(null);
-  const [lastUsage, setLastUsage] = useState<Usage | null>(null);
-  const [session, setSession] = useState<SessionStats>({ replies: 0, costUsd: 0, unknownCost: false });
   const [historyOpen, setHistoryOpen] = useState(false);
   const [costOpen, setCostOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [memoryCount, setMemoryCount] = useState<number | null>(null);
   const voicePending = useRef(false);
+  const speakToggle = useRef<(() => void) | undefined>(undefined);
+  const bindSpeak = useCallback((toggle: (() => void) | undefined) => {
+    speakToggle.current = toggle;
+  }, []);
   const [budget, setBudget] = useState<Budget | null>(null);
   const [overrideArmed, setOverrideArmed] = useState(false); // next message ignores the budget's brief mode
   const [warningDismissed, setWarningDismissed] = useState(false); // the 80% warning, once per session
@@ -118,10 +124,23 @@ export default function App() {
     if (auth === "signed-in") void refreshList();
   }, [auth, refreshList]);
 
-  // The month's budget for the status card and banner; chat events keep it current afterwards.
+  // The month's budget for the overview and banner; chat events keep it current afterwards.
   useEffect(() => {
     if (auth === "signed-in") getBudget().then(setBudget).catch(() => {});
   }, [auth]);
+
+  const refreshMemories = useCallback(async () => {
+    try {
+      setMemoryCount((await listMemories()).length);
+    } catch (err) {
+      if (isSignedOut(err)) handleError(err);
+    }
+  }, [handleError]);
+
+  useEffect(() => {
+    if (auth === "signed-in") void refreshMemories();
+    else setMemoryCount(null);
+  }, [auth, refreshMemories]);
 
   // Keep the newest text in view while a reply streams in.
   useEffect(() => {
@@ -176,8 +195,15 @@ export default function App() {
     setConversations([]);
     setBanner(null);
     setBudget(null);
+    setMemoryCount(null);
     setOverrideArmed(false);
     setAuth("signed-out");
+  }
+
+  function showCommand() {
+    setHistoryOpen(false);
+    setCostOpen(false);
+    setMemoryOpen(false);
   }
 
   function changeMode(next: Mode) {
@@ -265,17 +291,11 @@ export default function App() {
             ...(event.citations?.length ? { citations: event.citations } : {}),
           }));
           setActiveId(conversationId);
-          setLastUsage(event.usage);
           if (event.budget) setBudget(event.budget);
           if (fromVoice) {
             setSpeaking(true);
             speak(replyText, () => setSpeaking(false));
           }
-          setSession((s) => ({
-            replies: s.replies + 1,
-            costUsd: s.costUsd + (event.usage.cost_usd ?? 0),
-            unknownCost: s.unknownCost || event.usage.cost_usd === null,
-          }));
           void refreshList();
           break;
         case "error":
@@ -315,27 +335,39 @@ export default function App() {
 
   const activeTitle = conversations.find((c) => c.id === activeId)?.title ?? "New chat";
   const coreState = coreStateFor(messages, streaming);
+  const voice = voiceStatus(listening, speaking);
+  const linkLabel = streaming ? "Live" : model ? "Online" : "Link";
 
   return (
     <div className="app">
-      <OrbitDial
+      <CommandRail
+        coreState={coreState}
         conversations={conversations}
         activeId={activeId}
-        onSelect={(id) => void openConversation(id)}
+        voice={voice}
+        canSpeak={speechInputAvailable()}
+        onCommand={showCommand}
         onNew={startNewChat}
+        onSelect={(id) => void openConversation(id)}
         onOpenHistory={() => setHistoryOpen(true)}
+        onOpenMemory={() => setMemoryOpen(true)}
+        onOpenCost={() => setCostOpen(true)}
+        onSpeak={() => speakToggle.current?.()}
+        onSignOut={() => void signOut()}
       />
 
-      <main className="chat">
+      <div className="stage">
         <header className="topbar">
           <button type="button" className="icon-button menu-button" onClick={() => setHistoryOpen(true)} aria-label="Open conversations">
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
               <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
             </svg>
           </button>
-          <div className="topbar-core">
-            <Core state={coreState} size={34} showLabel={false} />
-          </div>
+          {messages.length > 0 && (
+            <div className="topbar-core">
+              <Core state={coreState} size={34} showLabel={false} />
+            </div>
+          )}
           {messages.length > 0 && (
             <button type="button" className="back-button" onClick={startNewChat} aria-label="Back to home" title="Back to home">
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -345,10 +377,8 @@ export default function App() {
             </button>
           )}
           <h1 className="topbar-title">{activeTitle}</h1>
-          <span className={`status-chip status-${coreState}`} aria-hidden="true">
-            {streaming ? "Live" : model ? "Online" : "Link"}
-          </span>
-          {/* The status card (with its cost link) is hidden on smaller screens; this takes its place. */}
+          <span className={`status-chip status-${coreState}`}>{linkLabel}</span>
+          <Clock />
           <button type="button" className={`icon-button cost-button budget-${budget?.state ?? "ok"}`}
             onClick={() => setCostOpen(true)} aria-label="Open cost details" title="Cost">
             $
@@ -358,6 +388,17 @@ export default function App() {
             M
           </button>
         </header>
+
+        <Overview
+          coreState={coreState}
+          memoryCount={memoryCount}
+          voice={voice}
+          toolsOn={tools}
+          toolsAvailable={toolsAvailable}
+          model={model}
+          budget={budget}
+          onOpenCost={() => setCostOpen(true)}
+        />
 
         {banner && (
           <div className="banner" role="alert">
@@ -380,16 +421,9 @@ export default function App() {
               <Core state={coreState} size={220} showLabel={false} />
               <h2>How can I help you learn today?</h2>
               <p>Code, math, science, projects, and new ideas, explained step by step.</p>
-              <div className="suggestions">
-                {SUGGESTIONS.map((s) => (
-                  <button key={s} type="button" onClick={() => setDraft(s)}>
-                    {s}
-                  </button>
-                ))}
-              </div>
             </div>
           ) : (
-            <div className="message-column">
+            <div className="message-column" role="log" aria-label="Conversation">
               {messages.map((m) => (
                 <MessageView
                   key={m.id}
@@ -401,46 +435,47 @@ export default function App() {
             </div>
           )}
         </div>
+      </div>
 
-        <div className="composer-area">
-          <Composer
-            text={draft}
-            onTextChange={changeDraft}
-            onVoiceTranscript={(text) => {
-              voicePending.current = true;
-              setDraft(text);
-            }}
-            speaking={speaking}
-            onStopSpeech={() => {
-              stopSpeaking();
-              setSpeaking(false);
-            }}
-            mode={mode}
-            onModeChange={changeMode}
-            tools={tools}
-            onToolsChange={toolsAvailable ? changeTools : undefined}
-            streaming={streaming}
-            onSend={(text, images) => void send(text, images)}
-            onStop={stop}
-          />
-        </div>
-      </main>
-
-      <StatusPanel
-        coreState={coreState}
-        model={model}
-        lastUsage={lastUsage}
-        session={session}
-        conversationCount={conversations.length}
-        mode={mode}
-        budget={budget}
-        onOpenCost={() => setCostOpen(true)}
-        onOpenMemory={() => setMemoryOpen(true)}
-        onSignOut={() => void signOut()}
+      <Activity
+        message={latestAssistant(messages)}
+        suggestions={SUGGESTIONS}
+        onSuggest={setDraft}
       />
 
+      <footer className="talkbar">
+        <p className="talkbar-label">Talk to mX</p>
+        <Composer
+          text={draft}
+          onTextChange={changeDraft}
+          onVoiceTranscript={(text) => {
+            voicePending.current = true;
+            setDraft(text);
+          }}
+          speaking={speaking}
+          onStopSpeech={() => {
+            stopSpeaking();
+            setSpeaking(false);
+          }}
+          onListeningChange={setListening}
+          bindSpeak={bindSpeak}
+          mode={mode}
+          onModeChange={changeMode}
+          tools={tools}
+          onToolsChange={toolsAvailable ? changeTools : undefined}
+          streaming={streaming}
+          onSend={(text, images) => void send(text, images)}
+          onStop={stop}
+        />
+      </footer>
+
       {costOpen && <CostPanel onClose={() => setCostOpen(false)} />}
-      {memoryOpen && <MemoryPanel onClose={() => setMemoryOpen(false)} />}
+      {memoryOpen && (
+        <MemoryPanel onClose={() => {
+          setMemoryOpen(false);
+          void refreshMemories();
+        }} />
+      )}
 
       {historyOpen && (
         <HistoryPanel
@@ -463,6 +498,13 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function voiceStatus(listening: boolean, speaking: boolean): VoiceStatus {
+  if (!speechInputAvailable() && !speechOutputAvailable()) return "unavailable";
+  if (listening) return "listening";
+  if (speaking) return "speaking";
+  return "online";
 }
 
 /** What the core shows: thinking before the first words and while a tool runs, responding while

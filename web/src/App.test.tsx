@@ -63,6 +63,7 @@ function installFakeApi(signedIn: boolean) {
       if (!api.signedIn) return json({ detail: "Not signed in" }, 401);
       if (path === "/whoami") return json({ model: "claude-opus-5-5", tools_enabled: api.toolsEnabled });
       if (path === "/usage/budget") return json(api.budget);
+      if (path === "/memories") return json([]);
       if (path.startsWith("/conversations?")) return json(api.conversations);
       if (path === "/chat") return api.chat(init);
       if (init.method === "DELETE") {
@@ -326,7 +327,7 @@ describe("chatting", () => {
     ])]);
     await renderSignedIn();
     send("Compute 2^100");
-    const chip = await screen.findByText("Ran code");
+    const chip = (await screen.findAllByText("Ran code"))[0];
     fireEvent.click(chip);
     expect(chip.closest("details")!.querySelectorAll("pre")[0].textContent).toBe("print(2**100)");
     await screen.findByText(/It is 1267650600228229401496703205376/);
@@ -337,9 +338,9 @@ describe("chatting", () => {
     api.storedCitations = [{ url: "https://docs.python.org/3/", title: "Python docs" }];
     render(<App />);
     fireEvent.click(await screen.findByText("Old chat"));
-    const link = await screen.findByRole("link", { name: "Python docs" });
+    const link = (await screen.findAllByRole("link", { name: "Python docs" }))[0];
     expect(link.getAttribute("href")).toBe("https://docs.python.org/3/");
-    expect(screen.getByText("Cited")).toBeTruthy();
+    expect(screen.getAllByText("Cited").length).toBeGreaterThan(0);
   });
 
   it("reopening a chat shows its stored steps", async () => {
@@ -348,7 +349,7 @@ describe("chatting", () => {
       output: null, error_code: "execution_time_exceeded" }];
     render(<App />);
     fireEvent.click(await screen.findByText("Old chat"));
-    expect(await screen.findByText("Code failed: time limit reached")).toBeTruthy();
+    expect((await screen.findAllByText("Code failed: time limit reached")).length).toBeGreaterThan(0);
   });
 
   it("the Tools toggle sends tools: false and is remembered", async () => {

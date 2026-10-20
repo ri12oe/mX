@@ -16,11 +16,13 @@ interface Props {
   onVoiceTranscript?: (text: string) => void;
   speaking?: boolean;
   onStopSpeech?: () => void;
+  onListeningChange?: (listening: boolean) => void;
+  bindSpeak?: (toggle: (() => void) | undefined) => void;
 }
 
 export function Composer({
   text, onTextChange, mode, onModeChange, tools = true, onToolsChange, streaming, onSend, onStop,
-  onVoiceTranscript, speaking = false, onStopSpeech,
+  onVoiceTranscript, speaking = false, onStopSpeech, onListeningChange, bindSpeak,
 }: Props) {
   const [images, setImages] = useState<string[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
@@ -122,7 +124,7 @@ export function Composer({
         onChange={(e) => onTextChange(e.target.value)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
-        placeholder="Ask mX anything…"
+        placeholder="I am listening…"
         rows={1}
         aria-label="Message"
       />
@@ -168,7 +170,14 @@ export function Composer({
               </button>
             ))}
           </div>
-          {onVoiceTranscript && <VoiceButton disabled={streaming} onTranscript={onVoiceTranscript} />}
+          {onVoiceTranscript && (
+            <VoiceButton
+              disabled={streaming}
+              onTranscript={onVoiceTranscript}
+              onListeningChange={onListeningChange}
+              bindToggle={bindSpeak}
+            />
+          )}
           {speaking && onStopSpeech && (
             <button type="button" className="button-secondary" onClick={onStopSpeech} aria-label="Stop speaking">
               Stop speech

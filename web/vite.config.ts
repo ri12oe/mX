@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
 // In development, Vite forwards API paths to uvicorn, so the page and the API
 // share one origin (http://localhost:5173) and the session cookie just works.
 const API = "http://127.0.0.1:8000";
-const API_PATHS = ["/auth", "/chat", "/conversations", "/images", "/whoami", "/health"];
+const API_PATHS = ["/auth", "/chat", "/conversations", "/images", "/whoami", "/health", "/usage", "/memories"];
 
 export default defineConfig({
   plugins: [react()],
