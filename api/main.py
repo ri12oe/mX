@@ -18,6 +18,7 @@ from api.config import settings
 from api.conversations import router as conversations_router
 from api.deps import get_db, get_provider, require_auth
 from api.images import router as images_router
+from api.memories import router as memories_router
 from api.migrate import migrate
 from api.usage import router as usage_router
 
@@ -35,6 +36,8 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
+    # Voice (stretch) needs the mic on this origin only. Camera and location stay off (design.md §10).
+    "Permissions-Policy": "microphone=(self), camera=(), geolocation=()",
 }
 # FastAPI's interactive docs load their scripts from a CDN, which the CSP would block.
 DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc"}
@@ -54,7 +57,7 @@ app = FastAPI(title="mX API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["X-mX-Key", "Content-Type"],
 )
 
@@ -74,6 +77,7 @@ app.include_router(chat_router)
 app.include_router(conversations_router)
 app.include_router(images_router)
 app.include_router(usage_router)
+app.include_router(memories_router)
 
 
 @app.get("/health")

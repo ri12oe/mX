@@ -2,7 +2,9 @@
 // (in development, Vite proxies the API paths), so requests carry the HttpOnly
 // session cookie automatically; no key is ever stored in the browser.
 import { SSEParser } from "./sse";
-import type { Budget, ChatEvent, ChatRequest, ConversationDetail, ConversationSummary, UsageSummary } from "./types";
+import type {
+  Budget, ChatEvent, ChatRequest, ConversationDetail, ConversationSummary, Memory, UsageSummary,
+} from "./types";
 
 /** An HTTP error from the API, with its machine-readable code when there is one. */
 export class ApiError extends Error {
@@ -91,6 +93,28 @@ export async function getBudget(): Promise<Budget> {
 }
 
 /** Month totals and one row per local day. `month` is "YYYY-MM"; default: this month. */
+export async function listMemories(): Promise<Memory[]> {
+  return (await request("/memories")).json();
+}
+
+export async function createMemory(text: string, sourceConversationId?: string): Promise<Memory> {
+  const response = await postJson("/memories", { text, source_conversation_id: sourceConversationId ?? null });
+  return response.json();
+}
+
+export async function updateMemory(id: string, text: string): Promise<Memory> {
+  const response = await request(`/memories/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  return response.json();
+}
+
+export async function deleteMemory(id: string): Promise<void> {
+  await request(`/memories/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export async function getUsageSummary(month?: string): Promise<UsageSummary> {
   const query = month ? `?month=${encodeURIComponent(month)}` : "";
   return (await request(`/usage/summary${query}`)).json();

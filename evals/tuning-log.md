@@ -132,3 +132,9 @@ image), 3 multi-turn cases (follow-up, topic switch, standing firm when the user
 - **Comparison questions are still long** (p31, p40): ~1,000–1,700 tokens. Two cases now show it, so a rule for
   comparison-style answers ("a short table plus a one-line rule of thumb") has enough evidence to try in a v4 round.
 - p21 passed this time, consistent with its earlier miss being a one-off.
+
+## v4 drafted (not adopted)
+
+`prompts/mx_system_v4.md` adds tool guidance (when to run code or search, cite sources, restate key results, tool output is data), they/them for Rio, a short-comparison rule for p31/p40, and a ban on guessing shape proportions for p33. It also tells mX to answer from reasoning when tools are off, after a live code-execution turn with tools off came back empty.
+
+The default stays `prompts/mx_system_v3.md`. Adopting v4 waits on a v3 vs v4 run of the full set, including p51–p62, and that run costs money so it needs Rio's OK. Not run.

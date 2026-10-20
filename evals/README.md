@@ -1,7 +1,7 @@
 # Evals
 `prompts.jsonl` holds test prompts, one JSON object per line:
 - required: `id`, `category`, `prompt`, `expect` (what a good answer looks like)
-- optional: `mode` (`normal` / `brief`), `history` (earlier `{role, content}` turns), `images` (paths under `evals/images/`)
+- optional: `mode` (`normal` / `brief`), `history` (earlier `{role, content}` turns), `images` (paths under `evals/images/`), `tools` (default true), `memories` (learner-profile notes), `expect_tools`, `expect_no_tools`, `expect_citations`, `expect_memory_proposal`
 
 50 prompts across 16 categories (math, coding, vision, memory, brevity, honesty, and more).
 
@@ -13,7 +13,7 @@ python -m evals.run                           # all cases with the current promp
 python -m evals.run --prompt-file prompts/mx_system_v2.md --ids p4,p11
 python -m evals.run --report evals/results/<run>.jsonl
 ```
-Each case takes the same path as `POST /chat`: the system prompt for its mode, the mode's `max_tokens`/`effort`, and the configured model. `--max-cost` (default $3) stops starting new cases once spend reaches it.
+Each case takes the same path as `POST /chat`: system parts, caching, tools, the mode's `max_tokens`/`effort`, and the configured model. `--max-cost` (default $3) counts tokens and tool fees and stops starting new cases once spend reaches it.
 
 Results go to `evals/results/<timestamp>_<prompt_version>.jsonl` (git-ignored), one row per case: the answer, model, tokens, cost, latency, and `stop_reason`.
 

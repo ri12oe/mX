@@ -114,11 +114,13 @@ def test_long_code_is_clipped_in_the_event(client: TestClient, fake: FakeProvide
     assert len(start["input"]["code"]) == db.MAX_CODE_CHARS and start["input"]["code_truncated"] is True
 
 
-def test_client_tool_steps_are_not_shown_or_saved(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
-    """propose_memory is a client tool: week 4 turns it into a memory suggestion, never a stored step."""
+def test_client_tool_steps_are_a_suggestion_and_not_saved(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
+    """propose_memory becomes a memory suggestion, never a stored step (design.md §18)."""
     fake.script = [ToolStep("m1", "propose_memory", "running", {"text": "Rio takes Calc II"}),
                    ToolStep("m1", "propose_memory", "ok", {"text": "Rio takes Calc II"}), "Noted."]
-    assert [name for name, _ in chat(client)] == ["meta", "delta", "done"]
+    events = chat(client)
+    assert [name for name, _ in events] == ["meta", "memory_suggestion", "delta", "done"]
+    assert events[1][1] == {"suggestion_id": "m1", "text": "Rio takes Calc II"}
     assert conn.execute("SELECT COUNT(*) FROM tool_steps").fetchone()[0] == 0
 
 

@@ -1,8 +1,9 @@
 # Start mX locally: rebuild the web app if it changed, run the server, open the browser.
 #   .\start-mx.ps1              (or double-click start-mx.cmd)
 #   .\start-mx.ps1 -NoBrowser   (don't open a browser tab)
-# Only this computer can reach it (127.0.0.1). Press Ctrl+C to stop.
-param([switch]$NoBrowser)
+#   .\start-mx.ps1 -Phone       (also print the Tailscale URL, if serve is already on)
+# Only this computer can reach it directly (127.0.0.1). Press Ctrl+C to stop.
+param([switch]$NoBrowser, [switch]$Phone)
 
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
@@ -26,6 +27,20 @@ if (-not (Select-String -Path ".env" -Pattern "^MX_PASSWORD=.{12,}" -Quiet)) {
 }
 if (-not (Select-String -Path ".env" -Pattern "^MX_API_KEY=.{32,}" -Quiet)) {
     Fail "MX_API_KEY in .env must be at least 32 characters. Generate one: .venv\Scripts\python.exe -c `"import secrets; print(secrets.token_urlsafe(32))`""
+}
+
+if ($Phone) {
+    # Does not change Tailscale's config. `tailscale serve` must already be proxying to this port.
+    # See docs/phone.md. Never use `tailscale funnel`.
+    if (-not (Get-Command tailscale -ErrorAction SilentlyContinue)) {
+        Fail "Tailscale isn't installed. See docs/phone.md."
+    }
+    $serve = & tailscale serve status 2>&1 | Out-String
+    $match = [regex]::Match($serve, "https://[A-Za-z0-9.-]+\.ts\.net")
+    if (-not $match.Success) {
+        Fail "Tailscale serve isn't running an HTTPS proxy. Follow docs/phone.md, then try -Phone again."
+    }
+    Write-Host "On your phone, open $($match.Value)" -ForegroundColor Cyan
 }
 
 # Already running? Then just open it.

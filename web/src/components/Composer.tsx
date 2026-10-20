@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { ACCEPTED_TYPES, MAX_IMAGES, checkImage, readAsDataUrl } from "../images";
 import type { Mode } from "../types";
+import { VoiceButton } from "./VoiceButton";
 
 interface Props {
   text: string;
@@ -12,10 +13,14 @@ interface Props {
   streaming: boolean;
   onSend: (text: string, images: string[]) => void;
   onStop: () => void;
+  onVoiceTranscript?: (text: string) => void;
+  speaking?: boolean;
+  onStopSpeech?: () => void;
 }
 
 export function Composer({
   text, onTextChange, mode, onModeChange, tools = true, onToolsChange, streaming, onSend, onStop,
+  onVoiceTranscript, speaking = false, onStopSpeech,
 }: Props) {
   const [images, setImages] = useState<string[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
@@ -163,6 +168,12 @@ export function Composer({
               </button>
             ))}
           </div>
+          {onVoiceTranscript && <VoiceButton disabled={streaming} onTranscript={onVoiceTranscript} />}
+          {speaking && onStopSpeech && (
+            <button type="button" className="button-secondary" onClick={onStopSpeech} aria-label="Stop speaking">
+              Stop speech
+            </button>
+          )}
           {onToolsChange && (
             <button
               type="button"
