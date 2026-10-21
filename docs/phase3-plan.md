@@ -1,6 +1,6 @@
 # mX — Phase 3 plan (draft)
 
-Owner: Rio · Status: **Draft, awaiting Rio's review** · Written: 2026-10-20
+Owner: Rio · Status: **Draft, awaiting Rio's review** · Written: 2026-10-20 · Updated: 2026-10-20 (DIY glasses)
 
 > This is a **plan**, not the design. `docs/design.md` v0.5 stays the source of truth until Rio approves this
 > plan; then the architect folds it into `design.md` v0.6 and a week-by-week `TASKS.md`, as for Phase 2.
@@ -11,7 +11,9 @@ Owner: Rio · Status: **Draft, awaiting Rio's review** · Written: 2026-10-20
 | Decision | Choice |
 |---|---|
 | Features | **All four:** AR glasses client · better voice + wake word · context awareness · files and richer tools |
-| Glasses | None yet: **recommend one** (§3) |
+| Glasses | **DIY custom glasses** (Rio, 2026-10-20), after comparing the G2, Meta and Halo (§3) |
+| DIY constraints | Parts **$100–250** · **no tools yet** (no soldering iron or 3D printer) · **at the desk first** · **display first, camera second** |
+| Phone | **iPhone**; laptop is Windows (no Mac) |
 | Size | **6–8 weeks**, **$20/month** API budget (same guard as Phase 2) |
 | Rules that stay | Local only (Tailscale for remote devices, never public), one task per PR, ask before paid API calls, provider SDK only in `providers/`, prompts in `prompts/` |
 
@@ -50,14 +52,50 @@ loose ends that Phase 3 must close **first**, because the new features stand on 
   behavior from the task 16 live test (answers carry no citation blocks), not an mX fault: the check is
   too strict.
 
-**So W1 is:** (1) when tools are off, tell mX so in that message (a short note from a `prompts/` file in the
-new user turn, after the cached prefix), plus a `/chat` guard that never saves or shows an empty reply
-(retry once with that note); (2) eval checks: every case must answer non-empty; citations **or** search
-sources count; (3) tighten brief mode for p10; (4) re-run the affected cases (≈ $0.30, with Rio's OK);
-(5) adopt v4.
+**Done in PR #46 (Phase 2 wrap-up, 2026-10-20):** a tools-off note in the newest message plus an
+`empty_reply` guard in `/chat`; eval checks (an empty reply fails; searched sources count); prompt v5
+(v4 + a tighter brief rule) re-run on the 22 affected cases (**20/20**, $0.64) and **adopted as the default**.
+Total eval spend: $3.43.
 5. The command-center layout (PR #44) replaced the orbit dial. New Phase 3 UI follows that layout.
 
-## 3. Glasses recommendation (updated 2026-10-20: Rio has an **iPhone**)
+## 3. Glasses: DIY (Rio's decision, 2026-10-20)
+
+**Goal:** see mX's chat on the glasses; later, tap to take a picture and get an answer. **Constraints:**
+$100–250 for parts, no tools yet, at the desk first, display before camera, an iPhone, and a Windows laptop.
+
+### The build
+| Step | Hardware | Tools needed | ~Cost |
+|---|---|---|---|
+| **v1: display** | **LILYGO T-Glass**: ESP32-S3, prism display (**126×126 visible pixels**), microphone, touch button, vibration motor, IMU, battery, Wi-Fi + Bluetooth LE | **None**: USB-C to flash and charge | $48–90 |
+| **v2: camera** | **Seeed XIAO ESP32S3 Sense** (camera + mic, Wi-Fi/BLE), a small LiPo battery, a clip or mount | **Soldering** (battery wires) and a mount: a makerspace, or a ~$30 starter soldering kit | $25–45 |
+| Spare/misc | USB-C cable, a spare battery, clips | – | $15–30 |
+
+Total ≈ **$90–165**, inside the $100–250 budget, with room for a soldering kit.
+
+**What the display can show:** 126×126 pixels is about **8 lines of ~20 characters**. That fits a **brief
+answer, paged** with the touch button, plus a one-line status ("Listening…", "Thinking…"). It isn't a full chat
+window: **brief mode is the glasses' native mode**, and the full chat stays on the laptop and phone.
+
+### How it connects (no Mac, no extra install)
+- **The mX web app is the bridge.** In **Edge or Chrome on the laptop**, the web app connects to the glasses
+  with **Web Bluetooth** (a browser feature) and sends them the latest question and answer as they stream.
+  The glasses never talk to the server directly, so they need no password or token, and mX stays bound to
+  `127.0.0.1`.
+- **Why not a Python bridge:** Python Bluetooth libraries on Windows use native components, and Smart App
+  Control has already blocked one unsigned native library (pydantic_core). The browser avoids that.
+- **Later, "anywhere":** the free iPhone browser **Bluefy** supports Web Bluetooth. Opening mX (over
+  Tailscale HTTPS) in Bluefy could run the same bridge code on the iPhone. That's a Phase 3 stretch / Phase 4 test.
+- **Firmware** (the program on the glasses): an ESP32 Arduino sketch based on LILYGO's T-Glass examples,
+  flashed over USB-C. If Smart App Control blocks the Arduino toolchain, flash from the browser instead
+  (Web Serial / ESP Web Tools).
+
+### Why DIY over the G2 / Meta (for the record)
+DIY is cheaper, fully under mX's control, works with an iPhone and Windows without a Mac, and can get a camera
+(v2), which neither the G2 (no camera) nor the Meta web apps (no camera access) offer here. The trade-offs:
+a much **smaller, simpler display**, a **hardware project** (risk, time, comfort), and **desk-only at first**.
+The comparison that led here is kept below.
+
+### Background: the commercial glasses compared (2026-10-20)
 
 **The goal, in Rio's words:** *the whole purpose is to show the AI model's chat on the glasses.* So the
 display matters most: it must show **several lines of readable text** and work with an **iPhone**. A camera
@@ -69,7 +107,7 @@ and a speaker are nice to have.
 | Brilliant Labs Halo | ~$299–349 | **Tiny 0.2" color display** at the top of the frame (you glance up; ~256×256 drawable) | ✅ | ✅ | ✅ | ⚠️ No Web Bluetooth on iPhone; a phone app needs a **Mac** to build, so laptop bridge only | Glance display: too small to read a chat |
 | Meta Ray-Ban Display | $799 (US only) | color, one lens | ✅ | ✅ | ✅ | ⚠️ The iOS SDK needs a **Mac/Xcode**; developer access is preview/invite-gated | Expensive, least open |
 
-**Recommendation: Even Realities G2.**
+**Earlier recommendation, superseded by DIY (§3): Even Realities G2.**
 - It's **built for reading text**: a display in both eyes, sharp at any focus distance (per reviewers), and
   about **3 days** of battery. The chat is the point, and this is the one designed to show it.
 - It's **the right fit for an iPhone and a Windows laptop**. G2 apps are **web apps** (HTML/TypeScript, built
@@ -143,14 +181,16 @@ a purchase until the spike passes.
    - **Spoken answers** from a better voice on the laptop and phone (the G2 has no speaker; on the
      glasses, answers are read).
    - **Wake word "Hey mX"** (stretch): local only, opt-in, off by default.
-5. **Glasses client (Even Realities G2):**
-   - **An Even Hub app** (TypeScript, Vite) that runs in the Even app on the iPhone and talks to the mX API
-     over Tailscale. The glasses are just another client.
-   - **Read the chat:** the latest question and mX's answer on the glasses, paged with swipes (brief mode
-     by default, normal on request).
-   - **Ask:** long-press the touchpad (or the R1 ring), speak; the glasses' mics → speech-to-text → mX.
-   - **Follow along:** messages sent from the phone or laptop also appear on the glasses.
-   - **Look:** "what am I looking at?" uses the **iPhone camera** (the G2 has none).
+5. **DIY glasses (§3):**
+   - **v1 display (T-Glass):** firmware that shows text sent over Bluetooth LE, pages it with the touch
+     button, and shows a status line; a **Glasses panel** in the mX web app that connects with Web Bluetooth
+     (Edge/Chrome on the laptop) and mirrors the latest question and answer as they stream, flattened to plain text.
+   - **Ask from the glasses:** a long-press sends "start talking". Speech comes from the laptop mic at first;
+     the glasses' own mic only if local speech-to-text works (W5 spike), since the browser's speech service
+     can't take audio from a Bluetooth device.
+   - **v2 camera (stretch, needs soldering):** the XIAO ESP32S3 Sense takes **one** photo on a tap and sends it
+     through the same bridge as an image attachment.
+   - **Anywhere (stretch):** the same bridge in Bluefy on the iPhone.
 
 ### Out of scope (Phase 4 or later)
 Continuous recording or an always-on camera (privacy), public deployment, multi-user accounts, Meta/Even
@@ -167,8 +207,9 @@ glasses SDKs, embeddings and memory search, fine-tuning, a backup model provider
 | Files | Where do uploads live? | Same SQLite DB (like images) up to a size cap; uploaded to Anthropic's Files API only when used, deleted from Anthropic after the chat goes idle |
 | Files | Container reuse across turns | Keep the container id per conversation; containers expire (30 days), so handle "expired" by starting fresh |
 | Speech | Local Whisper on Windows ARM64 with Smart App Control on | **Spike first:** Smart App Control already blocked one unsigned DLL (pydantic_core). Whisper runtimes ship native DLLs. If blocked, fall back to browser speech |
-| Glasses | How the G2 app signs in to mX | A dedicated **device token** (revocable, chat-only), not the main API key or the password; CORS allows only the Even app's origin |
-| Glasses | Showing long answers on a 576×288 green display | Brief mode by default, paging by swipe, markdown flattened to plain text, math as plain text |
+| Glasses | Bluetooth protocol | One custom BLE service: a text characteristic (chunked UTF-8, ≤ 180 bytes per write), a status characteristic, and button events as notifications; versioned so firmware and web app can change separately |
+| Glasses | Showing answers on 126×126 pixels | Brief mode by default; markdown, code and math flattened to plain text; ~8 lines × ~20 characters per page; the button pages; a long-press asks |
+| Glasses | Pairing and privacy | Web Bluetooth needs a user click to pair (a browser rule); only mX's own service UUID is requested; nothing is stored on the glasses except the current page |
 | Budget | Images, fetched pages and PDFs add input tokens | Keep the $20 guard; add a **per-turn input cap** for fetch/PDF (e.g. 30k tokens) and show it on the cost page |
 | Safety | Fetched pages, PDFs and calendar entries can contain prompt injection | Same rule as search results: data, never instructions; add `injection` evals for each new source |
 
@@ -176,17 +217,17 @@ glasses SDKs, embeddings and memory search, fine-tuning, a backup model provider
 
 | Week | Focus | Ships | Notes |
 |---|---|---|---|
-| **W1** | **Close Phase 2 + G2 spike** | v3 vs v4 and memory evals, **v4 adopted**, TTL decision; **Even Hub simulator spike** (Tailscale call, mic API, text layout) | The evals started 2026-10-20 with Rio's OK; the spike decides whether to buy the G2 |
+| **W1** | **Order parts** | Phase 2 is closed (PR #46: evals run, empty-reply fix, **prompt v5 adopted**); order the **T-Glass**; TTL decision once there's data | Shipping can take 1–3 weeks, so order now |
 | **W2** | **Files I: web fetch + PDFs** | `web_fetch` tool, PDF/document attachments, per-turn input cap, fetch evals | Low risk; uses the existing tool plumbing |
 | **W3** | **Files II: sandbox files** | Upload CSV/PDF into code execution, plots/files back (download + show in chat), container reuse per chat | Files API (stable, out of beta) |
 | **W4** | **Context awareness** | Date/time context, calendar ICS feed, "Now" note page, context evals (relevance + injection) | Context goes after the cached prefix |
 | **W5** | **Voice v2** | Speech spike result → local or browser STT, local TTS voice, one push-to-talk flow for laptop and phone | **Spike on day 1:** does local Whisper run under Smart App Control? |
-| **W6** | **Glasses I** | Even Hub app: device token, read the latest Q&A on the glasses, paging, follow chats from phone/laptop | Simulator first if the glasses aren't here |
-| **W7** | **Glasses II** | Ask by voice from the glasses (long-press → mic → STT → mX), plain-text formatting for the green display, iPhone-camera "look", glasses evals | |
-| **W8** | **Buffer + Phase 3 review** | Wake word (stretch), slipped tasks, `docs/phase3-review.md` | Hardware delays use this week |
+| **W6** | **Glasses I: display** | T-Glass firmware (BLE text + paging + status), the web app's Glasses panel (Web Bluetooth in Edge/Chrome), the latest Q&A streaming to the glasses | Flashing toolchain check on day 1 (Smart App Control) |
+| **W7** | **Glasses II: asking** | Long-press to ask (laptop mic; the glasses' mic if local STT works), plain-text formatting, brief-mode evals for the glasses | |
+| **W8** | **Buffer + Phase 3 review** | Stretch: **camera board (v2)** if soldering is set up; **Bluefy on the iPhone**; wake word. Slipped tasks, `docs/phase3-review.md` | Hardware delays use this week |
 
 **Slip order** if weeks run long: wake word (to Phase 4) → local TTS (keep browser voice) → sandbox file
-download (keep upload) → iPhone-camera "look" (keep reading + voice on the glasses).
+download (keep upload) → glasses camera v2 and Bluefy (keep the display + asking at the desk).
 
 ## 7. Budget
 
@@ -195,9 +236,8 @@ download (keep upload) → iPhone-camera "look" (keep reading + voice on the gla
   - a glasses photo ≈ 1–1.5k tokens (≈ $0.005);
   - local speech (STT/TTS) costs $0; paid speech would need a separate decision.
 - **Evals:** W1 ≈ $4–8 total (paid runs need Rio's OK each time); later weeks ≈ $1–3 each.
-- **Hardware (one-time, Rio's purchase):** Even Realities G2 **$599** (+ prescription lenses up to $159;
-  the R1 ring $249 and sunglass clip-on $99 are optional). Buy only after the W1 simulator spike passes.
-  Tailscale is free.
+- **Hardware (one-time, Rio's purchase, DIY):** ≈ **$90–165** of the $100–250 budget: T-Glass $48–90 now;
+  camera board + battery $25–45 and an optional ~$30 soldering kit for v2. Tailscale and Bluefy are free.
 - **Reality check from Phase 2:** a search-backed answer costs ≈ $0.10. If W1–W2 data shows the month
   trending past $20, the plan keeps the guard as is and Rio decides whether to raise the limit.
 
@@ -205,20 +245,23 @@ download (keep upload) → iPhone-camera "look" (keep reading + voice on the gla
 
 1. **Smart App Control vs native speech libraries.** Local Whisper/TTS may be blocked like pydantic_core
    was. Mitigation: day-1 spike in W5; browser speech is the fallback.
-2. **The G2 app platform is young** (Even Hub launched in March 2026; SDK version 0.0.x). APIs may change,
-   and microphone access for apps isn't confirmed. Mitigation: the W1 simulator spike, buying only after
-   it passes, and a phone-first fallback.
-3. **Hardware availability and quality.** Mitigation: simulator-first development, and the W8 buffer.
+2. **DIY hardware risk:** a small display (126×126), comfort and weight, battery life, and stock (the T-Glass
+   has been out of stock at times). Mitigation: order in W1, brief mode as the glasses' native mode, and the
+   W8 buffer. Nothing in mX depends on the glasses, so a hardware problem can't break the app.
+3. **Flashing toolchain vs Smart App Control** (Arduino/esptool binaries). Mitigation: flash from the
+   browser (Web Serial / ESP Web Tools) if blocked.
 4. **Prompt injection from new sources** (fetched pages, PDFs, calendar). Mitigation: data-not-instructions
    rule, plain-text rendering, and `injection` evals per source.
 5. **Cost creep** (pages, PDFs, photos). Mitigation: per-turn input cap, the cost page, the budget guard.
-6. **A device token on the phone.** The G2 app needs a way to sign in. Mitigation: a chat-only,
-   revocable device token (not the main key or password), and Tailscale-only access.
+6. **Bluetooth is short-range and unencrypted by default.** Mitigation: the glasses only receive the text
+   already on Rio's screen; they hold no password or token; pairing needs a click in the browser.
 
 ## 9. Decisions Rio needs to make (before the architect starts)
 
-1. ~~Which phone?~~ **iPhone** (Rio, 2026-10-20), so the recommendation is the **Even Realities G2** (§3).
-2. **Buy the G2 after the W1 simulator spike passes?** ($599, + prescription lenses if you need them.)
+1. ~~Which phone?~~ **iPhone** (Rio, 2026-10-20). ~~Which glasses?~~ **DIY** (Rio, 2026-10-20; §3).
+2. **Order the LILYGO T-Glass** (~$48–90) in W1? It's the v1 display, and stock varies, so check the LILYGO
+   store first.
+6. **For the v2 camera:** a makerspace, or a ~$30 starter soldering kit?
 3. ~~OK to run the W1 paid evals?~~ **Yes** (Rio, 2026-10-20); the runs started, $4 cap per prompt version.
 4. **Calendar:** which calendar would mX read (Google, Outlook, school LMS)? It must offer a private
    ICS link.
@@ -226,6 +269,13 @@ download (keep upload) → iPhone-camera "look" (keep reading + voice on the gla
    stay laptop-only if local speech doesn't work?
 
 ## Sources (glasses research, 2026-10-20)
+
+- LILYGO T-Glass: wiki <https://wiki.lilygo.cc/get_started/en/Wearable/T-Glass/T-Glass.html>,
+  <https://www.cnx-software.com/2024/07/01/lilygo-t-glass-esp32-powered-smart-glasses-with-1-1-inch-prism-display-imu-microphone/>,
+  <https://openelab.io/products/lilygo-t-glass-diy-prism-display-glasses>
+- Seeed XIAO ESP32S3 Sense: <https://www.atomic14.com/esp32/boards/xiao-esp32-s3/>,
+  <https://www.pakronics.com.au/products/seeed-studio-xiao-esp32s3-sense-ss113991115>
+- Bluefy (Web Bluetooth on iOS): <https://apps.apple.com/app/id1492822055>
 
 - Even Realities G2 review (price, display, battery): <https://9to5google.com/review-even-realities-g2-smart-glasses/>
 - Even Hub overview (specs, app model, testing): <https://hub.evenrealities.com/docs/get-started/overview>,
