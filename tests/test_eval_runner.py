@@ -33,7 +33,10 @@ def test_every_case_builds_valid_messages():
     for case in runner.load_cases():
         messages = runner.build_messages(case)
         assert messages[0].role == "user" and messages[-1].role == "user"
-        assert messages[-1].content == case.prompt
+        if case.tools:
+            assert messages[-1].content == case.prompt
+        else:  # same tools-off note as /chat
+            assert messages[-1].content.startswith(case.prompt + "\n\n(Note from the mX app")
 
 
 def test_tool_eval_cases_declare_the_checks_from_the_design():
@@ -117,6 +120,33 @@ def test_tool_auto_checks():
     assert runner.auto_checks("ok", case(expect_memory_proposal=False), [proposed], [])["pass"] is False
 
 
+def test_searched_sources_count_when_the_answer_has_no_citation_blocks():
+    """Dynamic filtering often returns answers without citation blocks (task 16 live test)."""
+    searched = ToolStep(id="s", tool="web_search", status="ok", input={"query": "q"},
+                        output={"sources": [{"url": "https://python.org", "title": "Python"}]})
+    failed = ToolStep(id="f", tool="web_search", status="error", input={"query": "q"}, error_code="unavailable")
+    assert runner.auto_checks("ok", case(expect_citations=True), [searched], [])["pass"] is True
+    assert runner.auto_checks("ok", case(expect_citations=True), [failed], [])["pass"] is False
+    empty_search = ToolStep(id="e", tool="web_search", status="ok", input={"query": "q"}, output={"sources": []})
+    assert runner.auto_checks("ok", case(expect_citations=True), [empty_search], [])["pass"] is False
+
+
+def test_an_empty_reply_fails_even_a_hand_graded_case():
+    """Eval p59 (2026-10-20) passed "no tools used" with an empty reply."""
+    result = runner.auto_checks("   ", case(expect_no_tools=True), [], [])
+    assert result == {"answered": False, "no_tools": True, "pass": False}
+    assert runner.auto_checks("", case(), [], []) == {"answered": False, "pass": False}
+    assert runner.auto_checks("A real answer.", case(), [], []) is None  # still graded by hand
+    assert runner.auto_reason({"answered": False, "pass": False}) == "empty reply"
+
+
+def test_tools_off_cases_get_the_same_note_as_chat():
+    off = runner.build_messages(case(tools=False))
+    on = runner.build_messages(case())
+    assert "are off for this message" in off[-1].content
+    assert "are off for this message" not in on[-1].content
+
+
 # --- Running -----------------------------------------------------------------
 
 
@@ -134,7 +164,7 @@ def test_run_all_writes_one_row_per_case_with_usage_and_cost(tmp_path: Path):
     rows = {r["prompt_id"]: r for r in map(json.loads, out.read_text(encoding="utf-8").splitlines())}
     assert set(rows) == {"p2", "p4"}
     p2 = rows["p2"]
-    assert (p2["output"], p2["model"], p2["prompt_version"]) == ("It is Tokyo.", "claude-opus-5-5", "mx_system_v3")
+    assert (p2["output"], p2["model"], p2["prompt_version"]) == ("It is Tokyo.", "claude-opus-5-5", "mx_system_v5")
     assert p2["usage"]["input_tokens"] == 1000 and p2["usage"]["output_tokens"] == 100
     assert p2["usage"]["web_searches"] == 0 and p2["tool_steps"] == []
     assert p2["cost_usd"] == pytest.approx(0.006)
@@ -279,7 +309,7 @@ def test_main_runs_writes_results_and_prints_the_report(
 ):
     use_fake(monkeypatch, tmp_path, FakeProvider(chunks=["It is Tokyo."], model="claude-opus-5-5"))
     assert runner.main(["--ids", "p2,p4"]) == 0
-    files = list(tmp_path.glob("*_mx_system_v3.jsonl"))
+    files = list(tmp_path.glob("*_mx_system_v5.jsonl"))
     assert len(files) == 1 and len(files[0].read_text(encoding="utf-8").splitlines()) == 2
     out = capsys.readouterr().out
     assert "Wrote 2 rows" in out and "| p2 |" in out and "Passed 1/1 graded" in out

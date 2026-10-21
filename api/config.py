@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     primary_provider: str = "anthropic"
     primary_model: str = "claude-opus-5-5"
     db_path: str = "./data/mx.db"
-    system_prompt_file: str = "prompts/mx_system_v3.md"
+    system_prompt_file: str = "prompts/mx_system_v5.md"
     # Built React app, served at / when present (the Docker image builds it).
     web_dist: str = "web/dist"
     # Session cookies are HTTPS-only. Browsers still accept them on http://localhost.

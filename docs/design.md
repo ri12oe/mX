@@ -2,7 +2,7 @@
 
 Owner: Rio · Status: **Draft, awaiting Rio's review** · Last updated: 2026-10-01
 
-> Status (2026-10-20): the Phase 2 tasks in `TASKS.md` are implemented except the paid eval runs (tasks 20 and 26), which wait on Rio's OK. `prompts/mx_system_v4.md` exists and is not the default. See `docs/phase2-review.md`.
+> Status (2026-10-20): **Phase 2 is complete.** The paid eval runs (tasks 20 and 26) ran with Rio's OK; the tools-off empty reply they found is fixed in code (a tools-off note in the newest message, and an `empty_reply` guard), and **`prompts/mx_system_v5.md` is the default**. Still open: the cache TTL, once there are a couple of weeks of cost-page data. See `docs/phase2-review.md` and `evals/tuning-log.md`.
 >
 > v0.5 change (2026-10-01): **Phase 2 design.** Phase 1 (v0.3 plus the Week 4–5 changes in §13) is shipped and
 > its sections stay accurate; Phase 2 additions are marked **"Phase 2"**. New: schema migrations (§7.1), prompt

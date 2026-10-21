@@ -27,7 +27,14 @@ from api.config import settings
 from api.deps import get_db, get_provider, require_auth
 from api.images import ImageError, decode_images
 from api.pricing import cost_usd
-from api.prompts import MODE_OPTIONS, Mode, SystemPrompt, load_system_prompt, render_learner_profile
+from api.prompts import (
+    MODE_OPTIONS,
+    Mode,
+    SystemPrompt,
+    load_system_prompt,
+    render_learner_profile,
+    with_tools_off_note,
+)
 from api.tools import propose_memory_tool
 from providers import ModelProvider
 from providers.base import (
@@ -169,7 +176,7 @@ async def chat(
 ) -> StreamingResponse:
     """Send a message to mX; the reply streams back as Server-Sent Events."""
     policy = apply_budget(conn, req)
-    pending = start_turn(conn, req, policy.mode)
+    pending = start_turn(conn, req, policy.mode, tools_off=not policy.tools)
     prompt = load_system_prompt(policy.mode, settings.system_prompt_file)
     memories = [row["text"] for row in db.list_memories(conn)]
     stream = provider.stream(
@@ -187,8 +194,12 @@ async def chat(
 # --- Before streaming --------------------------------------------------------
 
 
-def start_turn(conn: sqlite3.Connection, req: ChatRequest, mode: Mode) -> PendingTurn:
-    """Check images (422) and the conversation (404), then build the history to send."""
+def start_turn(conn: sqlite3.Connection, req: ChatRequest, mode: Mode, tools_off: bool = False) -> PendingTurn:
+    """Check images (422) and the conversation (404), then build the history to send.
+
+    With tools off, the newest message as sent carries a short note saying so
+    (prompts/tools_off_note_v1.md); what's saved is exactly what Rio typed.
+    """
     started = time.monotonic()
     try:
         images = decode_images(req.images)
@@ -210,7 +221,7 @@ def start_turn(conn: sqlite3.Connection, req: ChatRequest, mode: Mode) -> Pendin
         user_content=req.message,
         user_created_at=db.now_iso(),
         user_images=tuple(db.NewImage(db.new_id(), i.media_type, i.data) for i in images),
-        history=build_history(stored, req.message, images),
+        history=build_history(stored, with_tools_off_note(req.message) if tools_off else req.message, images),
         mode=mode,
         started=started,
     )
@@ -472,6 +483,13 @@ async def stream_events(
                 await stream.aclose()
 
         reply = item
+        if not turn.text.strip():
+            # The model ended its turn without writing anything (seen when tools were off,
+            # eval p59, 2026-10-20). Never save or show an empty answer; its spend still counts.
+            turn.record_failure("empty_reply", "failed")
+            yield sse("error", {"code": "empty_reply",
+                                "message": "mX finished without writing an answer. Please try again."})
+            return
         try:
             turn.save(reply)
         except sqlite3.Error:

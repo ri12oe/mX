@@ -28,7 +28,7 @@ from typing import Any
 from api.chat import build_system, tools_for, turn_cost
 from api.config import settings
 from api.images import sniff_media_type
-from api.prompts import MODE_OPTIONS, check_mode, load_system_prompt
+from api.prompts import MODE_OPTIONS, check_mode, load_system_prompt, with_tools_off_note
 from api.tools import propose_memory_tool
 from providers import ModelProvider, create_provider
 from providers.base import Citation, ImageData, Message, ModelResponse, ToolStep, UsageMeter
@@ -102,10 +102,14 @@ def load_cases(path: Path = PROMPTS_FILE, ids: set[str] | None = None) -> list[E
 
 
 def build_messages(case: EvalCase, root: Path = Path(".")) -> list[Message]:
-    """History turns, then the prompt (with its images) as the last user message."""
+    """History turns, then the prompt (with its images) as the last user message.
+
+    With tools off, the prompt carries the same tools-off note /chat adds.
+    """
     messages = [Message(role=role, content=content) for role, content in case.history]
     images = [load_image(root / p) for p in case.images]
-    messages.append(Message(role="user", content=case.prompt, images=images or None))
+    text = case.prompt if case.tools else with_tools_off_note(case.prompt)
+    messages.append(Message(role="user", content=text, images=images or None))
     return messages
 
 
@@ -130,6 +134,9 @@ def auto_checks(
     """Brief-mode shape, plus tool and citation checks when a case asks for them (design.md §12)."""
     checks: dict[str, Any] = {}
     flags: list[bool] = []
+    if not output.strip():  # an empty reply fails every case, graded by hand or not (p59, 2026-10-20)
+        checks["answered"] = False
+        flags.append(False)
     if case.mode == "brief":
         sentences = count_sentences(output)
         has_markdown = bool(_MARKDOWN.search(output))
@@ -145,8 +152,12 @@ def auto_checks(
         checks["no_tools"] = not steps
         flags.append(checks["no_tools"])
     if case.expect_citations is not None:
-        has_citations = bool(citations)
-        checks["citations"] = has_citations is case.expect_citations
+        # With dynamic filtering, answers often carry no citation blocks (task 16 live test); then the
+        # sources a finished search returned are the record, as in the UI's "Searched" list.
+        searched = any(step.tool == "web_search" and step.status == "ok" and (step.output or {}).get("sources")
+                       for step in steps)
+        has_sources = bool(citations) or searched
+        checks["citations"] = has_sources is case.expect_citations
         flags.append(checks["citations"])
     if case.expect_memory_proposal is not None:
         proposed = any(step.tool == "propose_memory" and step.status == "ok" for step in steps)
@@ -263,6 +274,8 @@ def verdict(row: dict[str, Any], grades: dict[str, dict[str, Any]]) -> bool | No
 
 def auto_reason(auto: dict[str, Any]) -> str:
     parts: list[str] = []
+    if auto.get("answered") is False:
+        parts.append("empty reply")
     if "sentences" in auto:
         parts.append(f"{auto['sentences']} sentences, markdown={auto['markdown']}")
     if auto.get("tools") is False:

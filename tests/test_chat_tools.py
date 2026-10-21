@@ -280,3 +280,44 @@ def test_search_fee_is_in_the_cost(client: TestClient, conn: sqlite3.Connection,
     assert done["usage"]["web_searches"] == 2
     assert done["usage"]["cost_usd"] == pytest.approx(0.0028 + 0.02)
     assert conn.execute("SELECT cost_usd FROM usage").fetchone()[0] == pytest.approx(0.0228)
+
+
+# --- Phase 2 wrap-up: tools-off note and the empty-reply guard ----------------
+
+
+def test_tools_off_adds_a_note_to_the_message_sent_but_not_the_one_saved(
+    client: TestClient, conn: sqlite3.Connection, fake: FakeProvider,
+):
+    chat(client, message="Who won the most recent World Cup?", tools=False)
+    sent = fake.calls[0].messages[-1].content
+    assert sent.startswith("Who won the most recent World Cup?")
+    assert "code execution and web search are off" in sent and "<!--" not in sent
+    saved = conn.execute("SELECT content FROM messages WHERE role = 'user'").fetchone()[0]
+    assert saved == "Who won the most recent World Cup?"  # exactly what Rio typed
+
+
+def test_tools_on_sends_the_message_unchanged(client: TestClient, fake: FakeProvider):
+    chat(client, message="Who won the most recent World Cup?")
+    assert fake.calls[0].messages[-1].content == "Who won the most recent World Cup?"
+
+
+def test_budget_brief_mode_also_adds_the_note(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
+    db.save_spend(conn, db.UsageRecord("anthropic", "claude-opus-5-5", "v", 1, 1, 25.0, 1))
+    chat(client)
+    assert "are off for this message" in fake.calls[0].messages[-1].content
+
+
+def test_an_empty_reply_is_an_error_and_never_saved(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
+    """Eval p59 (2026-10-20): with tools off the model ended its turn with only hidden thinking."""
+    fake.chunks = []
+    events = chat(client, tools=False)
+    assert events[-1] == ("error", {"code": "empty_reply",
+                                    "message": "mX finished without writing an answer. Please try again."})
+    assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    assert tuple(conn.execute("SELECT status, message_id FROM usage").fetchone()) == ("failed", None)  # spend counts
+
+
+def test_a_reply_with_only_tool_steps_and_no_text_is_also_an_error(client: TestClient, conn: sqlite3.Connection, fake: FakeProvider):
+    fake.script = [RUN, RAN]
+    assert chat(client)[-1][1]["code"] == "empty_reply"
+    assert conn.execute("SELECT COUNT(*) FROM tool_steps").fetchone()[0] == 0
